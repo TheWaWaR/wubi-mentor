@@ -62,7 +62,11 @@ impl CharStat {
     }
 
     pub fn miss_rate(&self) -> f64 {
-        if self.seen == 0 { 0.0 } else { self.missed as f64 / self.seen as f64 }
+        if self.seen == 0 {
+            0.0
+        } else {
+            self.missed as f64 / self.seen as f64
+        }
     }
 
     pub fn mastery(&self) -> Mastery {
@@ -93,12 +97,20 @@ pub struct Session {
 impl Session {
     /// 每分钟打对的字数。
     pub fn speed(&self) -> f64 {
-        if self.active_ms <= 0 { 0.0 } else { self.chars as f64 * 60_000.0 / self.active_ms as f64 }
+        if self.active_ms < 1000 {
+            0.0
+        } else {
+            self.chars as f64 * 60_000.0 / self.active_ms as f64
+        }
     }
 
     /// 一次打对的比例。
     pub fn accuracy(&self) -> f64 {
-        if self.chars == 0 { 1.0 } else { 1.0 - self.missed as f64 / self.chars as f64 }
+        if self.chars == 0 {
+            1.0
+        } else {
+            1.0 - self.missed as f64 / self.chars as f64
+        }
     }
 }
 
@@ -218,6 +230,7 @@ impl Db {
         Self::init(conn)
     }
 
+    #[cfg(test)]
     pub fn open_in_memory() -> Result<Self> {
         Self::init(Connection::open_in_memory()?)
     }
@@ -231,7 +244,11 @@ impl Db {
         Ok(db)
     }
 
+    /// 默认在 `~/Library/Application Support/wubi-mentor/wubi.db`；可用 `WUBI_DB` 覆盖。
     pub fn default_path() -> std::path::PathBuf {
+        if let Some(path) = std::env::var_os("WUBI_DB") {
+            return path.into();
+        }
         dirs::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("wubi-mentor")
@@ -300,8 +317,14 @@ impl Db {
             .conn
             .prepare("SELECT ch, full_code, short_codes, kind, roots, ident FROM chars")?;
         let rows = stmt.query_map([], |r| {
-            let cols: [String; 6] =
-                [r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?];
+            let cols: [String; 6] = [
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ];
             Ok(cols.join("\t"))
         })?;
         let mut entries = Vec::new();
@@ -348,9 +371,15 @@ impl Db {
 
     /// 修改内容时，若原进度之前的内容没变则保留进度，否则从头开始。
     pub fn update_text(&self, id: i64, title: &str, content: &str) -> Result<()> {
-        let Some(old) = self.text(id)? else { return Ok(()) };
+        let Some(old) = self.text(id)? else {
+            return Ok(());
+        };
         let kept: String = old.content.chars().take(old.position).collect();
-        let position = if content.starts_with(&kept) { old.position } else { 0 };
+        let position = if content.starts_with(&kept) {
+            old.position
+        } else {
+            0
+        };
         self.conn.execute(
             "UPDATE texts SET title = ?2, content = ?3, position = ?4, updated_at = ?5
              WHERE id = ?1",
@@ -383,7 +412,10 @@ impl Db {
     }
 
     pub fn hint_mode(&self) -> Result<HintMode> {
-        Ok(self.meta("hint_mode")?.map(|v| HintMode::parse(&v)).unwrap_or(HintMode::Always))
+        Ok(self
+            .meta("hint_mode")?
+            .map(|v| HintMode::parse(&v))
+            .unwrap_or(HintMode::Always))
     }
 
     pub fn set_hint_mode(&self, mode: HintMode) -> Result<()> {
@@ -420,7 +452,10 @@ impl Db {
                 row_to_stat,
             )
             .optional()?
-            .unwrap_or(CharStat { ch, ..Default::default() }))
+            .unwrap_or(CharStat {
+                ch,
+                ..Default::default()
+            }))
     }
 
     pub fn char_stats(&self) -> Result<Vec<CharStat>> {
@@ -433,8 +468,11 @@ impl Db {
 
     /// 最需要重练的字：出错多、最近一次出错、或打得很慢。
     pub fn weak_chars(&self, limit: usize) -> Result<Vec<CharStat>> {
-        let mut stats: Vec<CharStat> =
-            self.char_stats()?.into_iter().filter(|s| s.mastery() == Mastery::Weak).collect();
+        let mut stats: Vec<CharStat> = self
+            .char_stats()?
+            .into_iter()
+            .filter(|s| s.mastery() == Mastery::Weak)
+            .collect();
         stats.sort_by(|a, b| {
             b.miss_rate()
                 .total_cmp(&a.miss_rate())
@@ -553,7 +591,8 @@ mod tests {
     fn sessions_join_text_title() {
         let db = Db::open_in_memory().unwrap();
         let id = db.insert_text("标题", "内容").unwrap();
-        db.insert_session(Some(id), 0, 60_000, 60_000, 30, 3).unwrap();
+        db.insert_session(Some(id), 0, 60_000, 60_000, 30, 3)
+            .unwrap();
         let s = &db.sessions(10).unwrap()[0];
         assert_eq!(s.text_title.as_deref(), Some("标题"));
         assert_eq!(s.speed(), 30.0);

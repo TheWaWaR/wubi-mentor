@@ -8,3 +8,11 @@ gpui-kit = { version = "0.7.3", features = ["gpui-fast"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 anyhow = "1"
 dirs = "6"
+
+# 开发用：`cargo run --features snapshot` 按脚本操作界面并把每一步渲染成 PNG。
+gpui-fast = { version = "0.1.7", optional = true }
+gpui-fast-macos = { version = "0.1.7", optional = true }
+image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
+
+[features]
+snapshot = ["dep:gpui-fast", "dep:gpui-fast-macos", "dep:image", "gpui-fast/test-support", "gpui-fast-macos/test-support"]

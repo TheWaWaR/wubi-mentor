@@ -9,11 +9,31 @@ pub const DICT_VERSION: &str = "1";
 
 /// 键位 → 键名字根，按 QWERTY 键盘顺序可用 [`KEY_ROWS`] 访问。
 pub const KEY_NAMES: [(char, char); 25] = [
-    ('G', '王'), ('F', '土'), ('D', '大'), ('S', '木'), ('A', '工'),
-    ('H', '目'), ('J', '日'), ('K', '口'), ('L', '田'), ('M', '山'),
-    ('T', '禾'), ('R', '白'), ('E', '月'), ('W', '人'), ('Q', '金'),
-    ('Y', '言'), ('U', '立'), ('I', '水'), ('O', '火'), ('P', '之'),
-    ('N', '已'), ('B', '子'), ('V', '女'), ('C', '又'), ('X', '纟'),
+    ('G', '王'),
+    ('F', '土'),
+    ('D', '大'),
+    ('S', '木'),
+    ('A', '工'),
+    ('H', '目'),
+    ('J', '日'),
+    ('K', '口'),
+    ('L', '田'),
+    ('M', '山'),
+    ('T', '禾'),
+    ('R', '白'),
+    ('E', '月'),
+    ('W', '人'),
+    ('Q', '金'),
+    ('Y', '言'),
+    ('U', '立'),
+    ('I', '水'),
+    ('O', '火'),
+    ('P', '之'),
+    ('N', '已'),
+    ('B', '子'),
+    ('V', '女'),
+    ('C', '又'),
+    ('X', '纟'),
 ];
 
 pub const KEY_ROWS: [&str; 3] = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
@@ -48,6 +68,34 @@ pub fn key_roots(key: char) -> &'static str {
         'X' => "纟 幺 弓 匕 母框",
         _ => "",
     }
+}
+
+/// 系统字体缺字形的字根，换成形近的字或文字描述来显示。
+pub fn display_glyph(glyph: &str) -> &str {
+    match glyph {
+        "𡭔" => "小",
+        "㇟" => "乚",
+        "𠘧" => "几",
+        "𰀪" => "勿内",
+        "𠄐" => "了",
+        "𣥂" => "步底",
+        "𡆧" => "罒",
+        "𫶧" => "儿",
+        "𠃜" => "尸头",
+        "𧰨" => "象底",
+        "𰀁" => "十",
+        "𱼀" => "夕",
+        "𠚤" => "乂",
+        "𠧒" => "止",
+        "㇒" => "丿",
+        "𫩏" => "象中",
+        other => other,
+    }
+}
+
+/// 单笔画（一丨丿丶乙）：报户口 + 再打一次 + 补两个 L。
+pub fn is_single_stroke(ch: char) -> bool {
+    "一丨丿丶乙".contains(ch)
 }
 
 pub fn key_name(key: char) -> Option<char> {
@@ -98,13 +146,6 @@ pub struct Root {
     pub key: char,
 }
 
-impl Root {
-    /// 伪字根没有对应的 Unicode 字形，只能用文字描述。
-    pub fn is_descriptive(&self) -> bool {
-        self.glyph.chars().count() > 1
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub ch: char,
@@ -121,10 +162,22 @@ pub struct Entry {
 /// 编码中每一码的来源，用于逐码讲解。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CodePart {
-    Root { index: usize, key: char },
-    Ident { key: char, stroke: &'static str, shape: &'static str },
-    Stroke { key: char, stroke: &'static str },
-    KeyRepeat { key: char },
+    Root {
+        index: usize,
+        key: char,
+    },
+    Ident {
+        key: char,
+        stroke: &'static str,
+        shape: &'static str,
+    },
+    Stroke {
+        key: char,
+        stroke: &'static str,
+    },
+    KeyRepeat {
+        key: char,
+    },
 }
 
 impl CodePart {
@@ -152,7 +205,15 @@ impl Entry {
         let kind = CharKind::parse(cols.next()?);
         let (roots, verified) = parse_roots(cols.next()?);
         let ident = cols.next().and_then(|s| s.chars().next());
-        Some(Self { ch, full_code, short_codes, kind, roots, ident, verified })
+        Some(Self {
+            ch,
+            full_code,
+            short_codes,
+            kind,
+            roots,
+            ident,
+            verified,
+        })
     }
 
     pub fn roots_column(&self) -> String {
@@ -162,16 +223,11 @@ impl Entry {
             .map(|r| format!("{}:{}", r.glyph, r.key))
             .collect::<Vec<_>>()
             .join(" ");
-        if self.verified { body } else { format!("!{body}") }
-    }
-
-    /// 最短的编码（简码或全码）。
-    pub fn shortest_code(&self) -> &str {
-        self.short_codes
-            .iter()
-            .map(String::as_str)
-            .min_by_key(|c| c.len())
-            .unwrap_or(&self.full_code)
+        if self.verified {
+            body
+        } else {
+            format!("!{body}")
+        }
     }
 
     /// 全码每一码的由来。
@@ -181,7 +237,28 @@ impl Entry {
             CharKind::KeyName => keys
                 .iter()
                 .enumerate()
-                .map(|(i, &key)| if i == 0 { CodePart::Root { index: 0, key } } else { CodePart::KeyRepeat { key } })
+                .map(|(i, &key)| {
+                    if i == 0 {
+                        CodePart::Root { index: 0, key }
+                    } else {
+                        CodePart::KeyRepeat { key }
+                    }
+                })
+                .collect(),
+            CharKind::Radical if is_single_stroke(self.ch) => keys
+                .iter()
+                .enumerate()
+                .map(|(i, &key)| match i {
+                    0 => CodePart::Root { index: 0, key },
+                    1 => CodePart::Stroke {
+                        key,
+                        stroke: "本笔",
+                    },
+                    _ => CodePart::Stroke {
+                        key,
+                        stroke: "补 L",
+                    },
+                })
                 .collect(),
             CharKind::Radical => keys
                 .iter()
@@ -203,11 +280,17 @@ impl Entry {
                 let mut parts = Vec::new();
                 if n >= 4 {
                     for (slot, index) in [0, 1, 2, n - 1].into_iter().enumerate() {
-                        parts.push(CodePart::Root { index, key: keys.get(slot).copied().unwrap_or('?') });
+                        parts.push(CodePart::Root {
+                            index,
+                            key: keys.get(slot).copied().unwrap_or('?'),
+                        });
                     }
                 } else {
                     for (index, root) in self.roots.iter().enumerate() {
-                        parts.push(CodePart::Root { index, key: root.key });
+                        parts.push(CodePart::Root {
+                            index,
+                            key: root.key,
+                        });
                     }
                     if let Some(key) = self.ident {
                         let (stroke, shape) = ident_meaning(key);
@@ -240,7 +323,10 @@ fn parse_roots(col: &str) -> (Vec<Root>, bool) {
         .split(' ')
         .filter_map(|tok| {
             let (glyph, key) = tok.rsplit_once(':')?;
-            Some(Root { glyph: glyph.to_string(), key: key.chars().next()? })
+            Some(Root {
+                glyph: glyph.to_string(),
+                key: key.chars().next()?,
+            })
         })
         .collect();
     (roots, verified)
@@ -248,8 +334,13 @@ fn parse_roots(col: &str) -> (Vec<Root>, bool) {
 
 /// 末笔识别码：键所在区为末笔笔画，位为字型。
 pub fn ident_meaning(key: char) -> (&'static str, &'static str) {
-    const TABLE: [(&str, &str); 5] =
-        [("GFD", "横"), ("HJK", "竖"), ("TRE", "撇"), ("YUI", "捺"), ("NBV", "折")];
+    const TABLE: [(&str, &str); 5] = [
+        ("GFD", "横"),
+        ("HJK", "竖"),
+        ("TRE", "撇"),
+        ("YUI", "捺"),
+        ("NBV", "折"),
+    ];
     for (keys, stroke) in TABLE {
         if let Some(pos) = keys.find(key) {
             let shape = ["左右型", "上下型", "杂合型"][pos];
@@ -267,7 +358,9 @@ pub struct Dictionary {
 
 impl Dictionary {
     pub fn from_entries(entries: impl IntoIterator<Item = Entry>) -> Self {
-        Self { entries: entries.into_iter().map(|e| (e.ch, e)).collect() }
+        Self {
+            entries: entries.into_iter().map(|e| (e.ch, e)).collect(),
+        }
     }
 
     pub fn parse_tsv(tsv: &str) -> Vec<Entry> {
@@ -282,6 +375,7 @@ impl Dictionary {
         self.entries.contains_key(&ch)
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -310,11 +404,21 @@ mod tests {
         let e = d.get('的').unwrap();
         assert_eq!(e.full_code, "RQYY");
         assert_eq!(e.kind, CharKind::Compound);
-        assert_eq!(e.roots.iter().map(|r| r.glyph.as_str()).collect::<Vec<_>>(), ["白", "勹", "丶"]);
+        assert_eq!(
+            e.roots.iter().map(|r| r.glyph.as_str()).collect::<Vec<_>>(),
+            ["白", "勹", "丶"]
+        );
         assert_eq!(e.ident, Some('Y'));
         let parts = e.code_parts();
         assert_eq!(parts.len(), 4);
-        assert_eq!(parts[3], CodePart::Ident { key: 'Y', stroke: "捺", shape: "左右型" });
+        assert_eq!(
+            parts[3],
+            CodePart::Ident {
+                key: 'Y',
+                stroke: "捺",
+                shape: "左右型"
+            }
+        );
     }
 
     #[test]
@@ -332,7 +436,20 @@ mod tests {
         assert_eq!(d.get('王').unwrap().kind, CharKind::KeyName);
         let five = d.get('五').unwrap();
         assert_eq!(five.kind, CharKind::Radical);
-        assert!(matches!(five.code_parts()[1], CodePart::Stroke { stroke: "首笔", .. }));
+        assert!(matches!(
+            five.code_parts()[1],
+            CodePart::Stroke {
+                stroke: "首笔", ..
+            }
+        ));
+        let one = d.get('一').unwrap();
+        assert_eq!(one.full_code, "GGLL");
+        assert!(matches!(
+            one.code_parts()[3],
+            CodePart::Stroke {
+                stroke: "补 L", ..
+            }
+        ));
     }
 
     #[test]

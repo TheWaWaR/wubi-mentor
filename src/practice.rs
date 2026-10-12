@@ -17,8 +17,17 @@ pub enum Mark {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
-    Correct { index: usize, ch: char, ms: i64, errors: u32 },
-    Wrong { index: usize, expected: char, got: char },
+    Correct {
+        index: usize,
+        ch: char,
+        ms: i64,
+        errors: u32,
+    },
+    Wrong {
+        index: usize,
+        expected: char,
+        got: char,
+    },
     Finished,
 }
 
@@ -45,11 +54,19 @@ pub struct SessionTally {
 
 impl SessionTally {
     pub fn speed(&self) -> f64 {
-        if self.active_ms < 1000 { 0.0 } else { self.chars as f64 * 60_000.0 / self.active_ms as f64 }
+        if self.active_ms < 1000 {
+            0.0
+        } else {
+            self.chars as f64 * 60_000.0 / self.active_ms as f64
+        }
     }
 
     pub fn accuracy(&self) -> f64 {
-        if self.chars == 0 { 1.0 } else { 1.0 - self.missed as f64 / self.chars as f64 }
+        if self.chars == 0 {
+            1.0
+        } else {
+            1.0 - self.missed as f64 / self.chars as f64
+        }
     }
 }
 
@@ -120,7 +137,10 @@ impl Practice {
     }
 
     pub fn targets_done(&self) -> usize {
-        self.targets[..self.pos.min(self.targets.len())].iter().filter(|t| **t).count()
+        self.targets[..self.pos.min(self.targets.len())]
+            .iter()
+            .filter(|t| **t)
+            .count()
     }
 
     /// 自上次上屏以来的毫秒数（用于“停顿太久就提示”）。
@@ -147,7 +167,9 @@ impl Practice {
         let mut out = Vec::new();
         let mut elapsed = None;
         for got in text.chars() {
-            let Some(expected) = self.current() else { break };
+            let Some(expected) = self.current() else {
+                break;
+            };
             if got.is_whitespace() {
                 continue;
             }
@@ -155,10 +177,22 @@ impl Practice {
             let ms = *elapsed.get_or_insert_with(|| self.tick(now));
             if got == expected {
                 let errors = self.errors_here;
-                self.marks.insert(self.pos, if errors == 0 { Mark::Clean } else { Mark::Fixed });
+                self.marks.insert(
+                    self.pos,
+                    if errors == 0 {
+                        Mark::Clean
+                    } else {
+                        Mark::Fixed
+                    },
+                );
                 self.session.chars += 1;
                 self.session.missed += i64::from(errors > 0);
-                out.push(Outcome::Correct { index: self.pos, ch: expected, ms, errors });
+                out.push(Outcome::Correct {
+                    index: self.pos,
+                    ch: expected,
+                    ms,
+                    errors,
+                });
                 elapsed = Some(0);
                 self.advance();
                 if self.is_finished() {
@@ -171,7 +205,11 @@ impl Practice {
             } else {
                 self.errors_here += 1;
                 self.last_wrong = Some(got);
-                out.push(Outcome::Wrong { index: self.pos, expected, got });
+                out.push(Outcome::Wrong {
+                    index: self.pos,
+                    expected,
+                    got,
+                });
                 break;
             }
         }
@@ -246,7 +284,14 @@ mod tests {
     fn wrong_char_stays_and_counts() {
         let mut p = practice("我们");
         let out = p.input("找", 0);
-        assert_eq!(out, vec![Outcome::Wrong { index: 0, expected: '我', got: '找' }]);
+        assert_eq!(
+            out,
+            vec![Outcome::Wrong {
+                index: 0,
+                expected: '我',
+                got: '找'
+            }]
+        );
         assert_eq!(p.current(), Some('我'));
         assert_eq!(p.errors_here(), 1);
         let out = p.input("我", 500);
