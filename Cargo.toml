@@ -1,0 +1,10 @@
+[package]
+name = "wubi-mentor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gpui-kit = { version = "0.7.3", features = ["gpui-fast"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+anyhow = "1"
+dirs = "6"
