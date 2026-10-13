@@ -1,6 +1,6 @@
 # 字根学堂（zigen）
 
-学习 86 版五笔和第五代仓颉拆字的 macOS 桌面程序，基于 [GPUI Fast](https://github.com/longbridge/gpui-fast)
+学习 86 版五笔和第五代仓颉拆字的桌面程序，基于 [GPUI Fast](https://github.com/longbridge/gpui-fast)
 和 [GPUI Kit](https://github.com/longbridge/gpui-kit)。
 
 灵感来自 [wongsingfo/86wubi](https://github.com/wongsingfo/86wubi)：用自己的文本练习，
@@ -10,7 +10,7 @@
   右侧拆字卡显示字根序列、每一码的来源（字根 / 识别码 / 首、次、末笔）、简码；底部键盘高亮编码顺序。
   提示模式可选：始终提示 / 出错再提示（停顿 6 秒也会提示）/ 不提示（Tab 偷看）。
   打错的字会标出来，点任意字可以查看它的拆分或从这里开始练。
-- **文本库**：新建、粘贴、编辑练习文本；一键用最近的薄弱字生成“错字重练”。
+- **文本库**：新建、粘贴、编辑练习文本（空一行就是分页）；一键用最近的薄弱字生成“错字重练”。
 - **查字**：输入任意文字逐字显示拆分；空白时显示 86 版字根键盘和取码规则速记。
 - **统计**：累计字数和用时、速度/一次打对率曲线、每次练习记录、薄弱字。
 
@@ -26,9 +26,20 @@ cargo run --release
 
 需要 Rust 1.98.1（`rust-toolchain.toml` 会自动选择，gpui-fast 用到了较新的标准库特性）。
 
+平时在 macOS 上开发和测试。GPUI Fast 也支持 Windows 和 Linux，程序里没有平台专用代码，
+但还没在这两个平台上实际跑过，尤其是系统输入法的组字和上屏。
+
 ## 数据
 
-所有数据都在 SQLite 里：`~/Library/Application Support/zigen/zigen.db`（可用环境变量 `ZIGEN_DB` 指定；旧版 `wubi-mentor/wubi.db` 会在首次启动时自动搬过来）。
+所有数据都在 SQLite 里，放在系统的应用数据目录下：
+
+| 平台 | 路径 |
+| --- | --- |
+| macOS | `~/Library/Application Support/zigen/zigen.db` |
+| Linux | `$XDG_DATA_HOME/zigen/zigen.db`（默认 `~/.local/share/zigen/zigen.db`） |
+| Windows | `%APPDATA%\zigen\zigen.db` |
+
+（可用环境变量 `ZIGEN_DB` 指定；旧版 `wubi-mentor/wubi.db` 会在首次启动时自动搬过来）。
 
 | 表 | 内容 |
 | --- | --- |
@@ -61,20 +72,25 @@ Unicode 私用区。字体和逐码字形数据（`wb_spelling.dict.yaml`）来�
   再用各部件单独成字的编码印证；2 万多字里约 94% 能拆出字首字身，整体字约 3%，其余只逐码讲解；
 - `data/cangjie5_keys.tsv` 是从拆分里统计出的每个键上常见的辅助字形。
 
+内置文本只有《大学》《中庸》《论语》（`data/texts/`），用朱熹《四书章句集注》本，朱注放在正文后的括号里。
+由 `scripts/build_classics.py` 从维基文库的[《四书章句集注》](https://zh.wikisource.org/wiki/四書章句集註)
+抓取，去掉维基文库编者的校记，再用 OpenCC 转成简体，最后按章插空行分页（太长的章在朱注后断开）。旧版内置的示例文本没改过的会在升级时换掉。
+
 重新生成数据：
 
 ```bash
 python3 scripts/build_dict.py <下载目录> data/wubi86.tsv "$(cat scripts/traditional_roots.txt)"
 python3 scripts/patch_root_font.py <黑体字根.ttf> assets/fonts/wubi-roots.ttf
 python3 scripts/build_cangjie.py <下载目录> data/cangjie5.tsv
+python3 scripts/build_classics.py data/texts   # 需要 pip install opencc
 ```
 
 ## 开发
 
 ```bash
 cargo test
-# 按脚本操作界面并把每一步渲染成 PNG（不需要屏幕录制权限；还支持 move/click x y 模拟鼠标）
+# 按脚本操作界面并把每一步渲染成 PNG（仅 macOS；不需要屏幕录制权限；还支持 move/click x y 模拟鼠标）
 ZIGEN_DB=/tmp/snap.db ZIGEN_SNAPSHOT=/tmp/snap \
-ZIGEN_SNAPSHOT_SCRIPT="open 常用字; type 学习五笔; mark rqyy; lookup 照键; scheme cangjie5; lookup 我们; page stats" \
+ZIGEN_SNAPSHOT_SCRIPT="open 大学; type 大学之道; mark rqyy; lookup 照键; scheme cangjie5; lookup 我们; page stats" \
 cargo run --features snapshot
 ```

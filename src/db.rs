@@ -243,25 +243,30 @@ CREATE TABLE chars (
 );
 ";
 
+/// 内置文本：朱熹《四书章句集注》本，连同朱注，见 `scripts/build_classics.py`。
 const SAMPLE_TEXTS: [(&str, &str); 3] = [
-    (
-        "一级简码",
-        "一地在要工上是中国同和的有人我主产不为这民了发以经",
-    ),
-    (
-        "常用字入门",
-        "学习五笔的第一步是认识字根。每个汉字都可以拆成几个字根，再按照书写的顺序取码。\
-         刚开始的时候速度会很慢，这是正常的。不要急着追求速度，先把每个字拆对，\
-         手指自然会记住键位。每天练习一会儿，坚持一个月，你就会发现自己打字又快又准。",
-    ),
-    (
-        "桃花源记（节选）",
-        "晋太元中，武陵人捕鱼为业。缘溪行，忘路之远近。忽逢桃花林，夹岸数百步，中无杂树，\
-         芳草鲜美，落英缤纷。渔人甚异之，复前行，欲穷其林。林尽水源，便得一山，山有小口，\
-         仿佛若有光。便舍船，从口入。初极狭，才通人。复行数十步，豁然开朗。土地平旷，\
-         屋舍俨然，有良田美池桑竹之属。阡陌交通，鸡犬相闻。",
-    ),
+    ("大学", include_str!("../data/texts/daxue.txt")),
+    ("中庸", include_str!("../data/texts/zhongyong.txt")),
+    ("论语", include_str!("../data/texts/lunyu.txt")),
 ];
+
+/// 早先内置的示例文本，没改过的会被换掉。
+const OLD_SAMPLE_TITLES: [&str; 3] = ["一级简码", "常用字入门", "桃花源记（节选）"];
+
+/// `old` 里第 `position` 个字在 `new` 里的下标，两边只差换行。
+fn remap_position(old: &str, new: &str, position: usize) -> usize {
+    let target = old.chars().take(position).filter(|&c| c != '\n').count();
+    let mut seen = 0;
+    for (i, c) in new.chars().enumerate() {
+        if c != '\n' {
+            if seen == target {
+                return i;
+            }
+            seen += 1;
+        }
+    }
+    new.chars().count()
+}
 
 impl Db {
     pub fn open(path: &Path) -> Result<Self> {
@@ -316,7 +321,8 @@ impl Db {
         Ok(db)
     }
 
-    /// 默认在 `~/Library/Application Support/zigen/zigen.db`；可用 `ZIGEN_DB` 覆盖。
+    /// 默认在系统应用数据目录下的 `zigen/zigen.db`（macOS 是 `~/Library/Application Support`，
+    /// Linux 是 `~/.local/share`，Windows 是 `%APPDATA%`）；可用 `ZIGEN_DB` 覆盖。
     /// 旧版（wubi-mentor）的数据库会在第一次用默认路径时搬过来。
     pub fn default_path() -> Result<PathBuf> {
         if let Some(path) = std::env::var_os("ZIGEN_DB") {
@@ -377,13 +383,65 @@ impl Db {
     }
 
     fn seed_texts(&self) -> Result<()> {
-        if self.meta("seeded_texts")?.is_some() {
-            return Ok(());
+        match self.meta("seeded_texts")?.as_deref() {
+            Some("3") => return Ok(()),
+            // 已经有内置文本，只是没分页。
+            Some("2") => self.refresh_sample_texts()?,
+            _ => self.replace_old_samples()?,
         }
-        for (title, content) in SAMPLE_TEXTS {
+        self.set_meta("seeded_texts", "3")
+    }
+
+    fn replace_old_samples(&self) -> Result<()> {
+        for title in OLD_SAMPLE_TITLES {
+            self.conn.execute(
+                "DELETE FROM texts WHERE title = ?1 AND updated_at = created_at",
+                [title],
+            )?;
+        }
+        // 倒着插，列表里（同一时间按 id 倒序）大学在最前。
+        for (title, content) in SAMPLE_TEXTS.iter().rev() {
             self.insert_text(title, content)?;
         }
-        self.set_meta("seeded_texts", "1")
+        Ok(())
+    }
+
+    /// 没改过的内置文本换成新版；新版只多了换行，进度按换行以外的字数对上。
+    fn refresh_sample_texts(&self) -> Result<()> {
+        for (title, content) in SAMPLE_TEXTS {
+            let rows: Vec<(i64, String)> = self
+                .conn
+                .prepare(
+                    "SELECT id, content FROM texts WHERE title = ?1 AND updated_at = created_at",
+                )?
+                .query_map([title], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            for (id, old) in rows {
+                if old == content {
+                    continue;
+                }
+                let progress: Vec<(String, i64)> = self
+                    .conn
+                    .prepare("SELECT scheme, position FROM text_progress WHERE text_id = ?1")?
+                    .query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect::<rusqlite::Result<_>>()?;
+                for (scheme, position) in progress {
+                    self.conn.execute(
+                        "UPDATE text_progress SET position = ?3 WHERE scheme = ?1 AND text_id = ?2",
+                        params![
+                            scheme,
+                            id,
+                            remap_position(&old, content, position.max(0) as usize) as i64
+                        ],
+                    )?;
+                }
+                self.conn.execute(
+                    "UPDATE texts SET content = ?2 WHERE id = ?1",
+                    params![id, content],
+                )?;
+            }
+        }
+        Ok(())
     }
 
     pub fn load_dictionary(&self) -> Result<Dictionary> {
@@ -712,6 +770,42 @@ mod tests {
         assert!(dict.len() > 9000);
         assert_eq!(dict.get('的').unwrap().full_code, "RQYY");
         assert_eq!(db.texts().unwrap().len(), SAMPLE_TEXTS.len());
+    }
+
+    #[test]
+    fn replaces_untouched_old_samples() {
+        let db = Db::open_in_memory().unwrap();
+        db.conn.execute("DELETE FROM texts", []).unwrap();
+        db.insert_text("一级简码", "一地在要工").unwrap();
+        let edited = db.insert_text("常用字入门", "学习五笔").unwrap();
+        db.conn
+            .execute(
+                "UPDATE texts SET updated_at = updated_at + 1 WHERE id = ?1",
+                [edited],
+            )
+            .unwrap();
+        db.set_meta("seeded_texts", "1").unwrap();
+        db.seed_texts().unwrap();
+        let mut titles: Vec<String> = db.texts().unwrap().into_iter().map(|t| t.title).collect();
+        titles.sort();
+        assert_eq!(titles, ["中庸", "大学", "常用字入门", "论语"]);
+    }
+
+    #[test]
+    fn refreshes_untouched_samples_keeping_progress() {
+        let db = Db::open_in_memory().unwrap();
+        db.conn.execute("DELETE FROM texts", []).unwrap();
+        let old = SAMPLE_TEXTS[0].1.replace("\n\n", "\n");
+        let id = db.insert_text(SAMPLE_TEXTS[0].0, &old).unwrap();
+        let pos = old.chars().count() / 2;
+        db.set_position(id, pos).unwrap();
+        db.set_meta("seeded_texts", "2").unwrap();
+        db.seed_texts().unwrap();
+        let text = db.text(id).unwrap().unwrap();
+        assert_eq!(text.content, SAMPLE_TEXTS[0].1);
+        let ch = |s: &str, i: usize| s.chars().nth(i);
+        assert_eq!(ch(&text.content, text.position), ch(&old, pos));
+        assert_eq!(db.texts().unwrap().len(), 1);
     }
 
     #[test]

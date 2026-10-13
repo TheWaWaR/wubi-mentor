@@ -29,8 +29,10 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
-/// 一页大约多少个字；会延伸到下一个句末，避免把句子拆开。
-const PAGE_CHARS: usize = 240;
+/// 一段（空行之间）超过这么多字才再切开，免得一页太长；切的时候每页大约
+/// `PAGE_CHARS` 个字，延伸到下一个句末，避免把句子拆开。
+const PAGE_MAX_CHARS: usize = 1500;
+const PAGE_CHARS: usize = 600;
 /// 选了“出错再提示”时，停顿这么久也自动显示拆分。
 const IDLE_HINT_MS: i64 = 6_000;
 /// 停顿这么久就结束本次练习记录。
@@ -268,7 +270,8 @@ impl PracticeView {
         let Some(p) = self.practice.as_ref() else {
             return;
         };
-        if let Some(page) = self.pages.iter().find(|r| r.contains(&p.position())) {
+        let page = &self.pages[self.page_of(p.position())];
+        if page.contains(&p.position()) {
             self.paper_scroll.scroll_to_item(p.position() - page.start);
         }
     }
@@ -344,30 +347,40 @@ impl PracticeView {
         if let Some(page) = self.browse_page {
             return page.min(self.pages.len().saturating_sub(1));
         }
-        let pos = self.practice.as_ref().map(|p| p.position()).unwrap_or(0);
+        self.page_of(self.practice.as_ref().map(|p| p.position()).unwrap_or(0))
+    }
+
+    /// 下标所在的页；落在页与页之间的空白里就算下一页。
+    fn page_of(&self, index: usize) -> usize {
         self.pages
             .iter()
-            .position(|r| r.contains(&pos))
+            .position(|r| index < r.end)
             .unwrap_or(self.pages.len().saturating_sub(1))
     }
 }
 
+/// 按空行分页：连着两个换行（中间可以有空白）就是一页的边界。页的范围不含首尾的空白。
 fn paginate(chars: &[char]) -> Vec<Range<usize>> {
     let mut pages = Vec::new();
     let mut start = 0;
-    while start < chars.len() {
-        let mut end = (start + PAGE_CHARS).min(chars.len());
-        if end < chars.len() {
-            let limit = (end + 80).min(chars.len());
-            if let Some(off) = chars[end..limit]
+    let mut i = 0;
+    while i <= chars.len() {
+        let blank = chars[i..].first() == Some(&'\n') && {
+            let rest = &chars[i + 1..];
+            let gap = rest
                 .iter()
-                .position(|c| "\n。！？；…".contains(*c))
-            {
-                end += off + 1;
+                .take_while(|c| **c != '\n' && c.is_whitespace())
+                .count();
+            rest.get(gap) == Some(&'\n')
+        };
+        if i == chars.len() || blank {
+            split_long(chars, trim(chars, start..i), &mut pages);
+            while i < chars.len() && chars[i].is_whitespace() {
+                i += 1;
             }
+            start = i;
         }
-        pages.push(start..end);
-        start = end;
+        i += 1;
     }
     if pages.is_empty() {
         pages.push(0..0);
@@ -375,6 +388,41 @@ fn paginate(chars: &[char]) -> Vec<Range<usize>> {
     pages
 }
 
+fn trim(chars: &[char], mut r: Range<usize>) -> Range<usize> {
+    while r.start < r.end && chars[r.start].is_whitespace() {
+        r.start += 1;
+    }
+    while r.end > r.start && chars[r.end - 1].is_whitespace() {
+        r.end -= 1;
+    }
+    r
+}
+
+/// 没有空行的长文本按字数切开。
+fn split_long(chars: &[char], r: Range<usize>, pages: &mut Vec<Range<usize>>) {
+    if r.is_empty() {
+        return;
+    }
+    if r.len() <= PAGE_MAX_CHARS {
+        pages.push(r);
+        return;
+    }
+    let mut start = r.start;
+    while start < r.end {
+        let mut end = (start + PAGE_CHARS).min(r.end);
+        if end < r.end {
+            let limit = (end + 200).min(r.end);
+            if let Some(off) = chars[end..limit]
+                .iter()
+                .position(|c| "\n。！？；…".contains(*c))
+            {
+                end += off + 1;
+            }
+        }
+        pages.push(trim(chars, start..end));
+        start = end;
+    }
+}
 impl EntityInputHandler for PracticeView {
     fn text_for_range(
         &mut self,
@@ -677,7 +725,7 @@ impl PracticeView {
                             .rounded(px(5.))
                             .bg(theme.foreground)
                             .text_color(theme.background)
-                            .font_family("Menlo")
+                            .font_family(theme.mono_font_family.clone())
                             .whitespace_nowrap()
                             .text_size(px(14.))
                             .line_height(px(20.))
@@ -1059,5 +1107,41 @@ impl Render for PracticeView {
                     .bg(theme.sidebar)
                     .child(Keyboard::new(self.store.scheme()).highlight(&code)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PAGE_MAX_CHARS, paginate};
+
+    fn pages(text: &str) -> Vec<String> {
+        let chars: Vec<char> = text.chars().collect();
+        paginate(&chars)
+            .into_iter()
+            .map(|r| chars[r].iter().collect())
+            .collect()
+    }
+
+    #[test]
+    fn splits_on_blank_lines() {
+        assert_eq!(
+            pages("\n学而时习之。\n不亦说乎？\n\n有朋自远方来。\n \n\n\n人不知而不愠。\n"),
+            [
+                "学而时习之。\n不亦说乎？",
+                "有朋自远方来。",
+                "人不知而不愠。"
+            ]
+        );
+        assert_eq!(pages(""), [""]);
+        assert_eq!(pages("\n\n"), [""]);
+    }
+
+    #[test]
+    fn splits_long_paragraph_at_sentence_end() {
+        let text = "学而时习之。".repeat(PAGE_MAX_CHARS / 6 + 1);
+        let pages = pages(&text);
+        assert!(pages.len() > 1);
+        assert!(pages.iter().all(|p| p.ends_with('。')));
+        assert_eq!(pages.concat(), text);
     }
 }
