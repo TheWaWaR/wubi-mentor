@@ -4,7 +4,9 @@ use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::dict::{KEY_ROWS, ROOT_FONT, key_name, key_roots, key_roots_frequent};
+use std::collections::HashSet;
+
+use crate::dict::{KEY_ROWS, ROOT_FONT, Root, key_name, key_roots, key_roots_frequent};
 
 /// 五笔的五个区：横、竖、撇、捺、折。
 pub fn zone_of(key: char) -> Option<usize> {
@@ -25,6 +27,9 @@ pub fn zone_color(zone: usize, cx: &App) -> Hsla {
 pub struct Keyboard {
     /// 要高亮的键和它在编码中的序号（从 1 开始）。
     highlights: Vec<(char, usize)>,
+    /// 激活的字根（字根字体字形）和它们所在的键，在键盘上标出来。
+    active_glyphs: HashSet<char>,
+    active_keys: HashSet<char>,
     /// 大键帽，显示该键的全部字根（字根表用）；否则只显示最常用的几个。
     large: bool,
 }
@@ -33,12 +38,22 @@ impl Keyboard {
     pub fn new() -> Self {
         Self {
             highlights: Vec::new(),
+            active_glyphs: HashSet::new(),
+            active_keys: HashSet::new(),
             large: false,
         }
     }
 
     pub fn highlight(mut self, code: &str) -> Self {
         self.highlights = code.chars().enumerate().map(|(i, k)| (k, i + 1)).collect();
+        self
+    }
+
+    pub fn active_roots<'a>(mut self, roots: impl IntoIterator<Item = &'a Root>) -> Self {
+        for root in roots {
+            self.active_keys.insert(root.key);
+            self.active_glyphs.extend(root.font_glyph);
+        }
         self
     }
 
@@ -61,7 +76,7 @@ const EXPANDED_WIDTH: f32 = 168.;
 impl RenderOnce for Keyboard {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let any_highlight = !self.highlights.is_empty();
+        let any_highlight = !self.highlights.is_empty() || !self.active_keys.is_empty();
         let hover = window.use_keyed_state(
             if self.large {
                 "keyboard-hover-large"
@@ -87,8 +102,11 @@ impl RenderOnce for Keyboard {
             let tint = zone
                 .map(|z| zone_color(z, cx))
                 .unwrap_or(theme.muted_foreground);
+            let active_key = self.active_keys.contains(&key);
             let (bg, border) = if lit {
                 (tint.opacity(0.9), tint)
+            } else if active_key {
+                (tint.opacity(0.16), tint)
             } else if any_highlight {
                 (tint.opacity(0.05), tint.opacity(0.2))
             } else {
@@ -104,13 +122,32 @@ impl RenderOnce for Keyboard {
             } else {
                 theme.muted_foreground
             };
-            let hidden = if self.large {
-                0
+            let all = key_roots(key);
+            let is_active = |g: char| self.active_glyphs.contains(&g);
+            // 小键帽只显示常用字根，再加上激活的字根。
+            let shown: Vec<char> = if self.large {
+                all.iter().skip(1).copied().collect()
             } else {
-                key_roots(key)
-                    .len()
-                    .saturating_sub(1 + key_roots_frequent(key).len())
+                let frequent = key_roots_frequent(key);
+                all.iter()
+                    .skip(1)
+                    .copied()
+                    .filter(|g| frequent.contains(g) || is_active(*g))
+                    .collect()
             };
+            let hidden = all.len().saturating_sub(1 + shown.len());
+            // 一个字根字形；激活的用区色实底标出。
+            let glyph = |g: char| {
+                div()
+                    .when(is_active(g) && !lit, |d| {
+                        d.px(px(2.))
+                            .rounded(px(4.))
+                            .bg(tint)
+                            .text_color(gpui_kit::white())
+                    })
+                    .child(g.to_string())
+            };
+            let name_active = all.first().is_some_and(|g| is_active(*g));
             let header = |name_size_large: bool, fg: Hsla, sub: Hsla| {
                 h_flex()
                     .justify_between()
@@ -125,6 +162,9 @@ impl RenderOnce for Keyboard {
                     .when_some(key_name(key), |this, name| {
                         this.child(
                             div()
+                                .when(name_active && !lit, |d| {
+                                    d.px(px(3.)).rounded(px(4.)).bg(tint)
+                                })
                                 .map(|d| {
                                     if name_size_large {
                                         d.text_xl()
@@ -133,7 +173,11 @@ impl RenderOnce for Keyboard {
                                     }
                                 })
                                 .font_weight(FontWeight::BOLD)
-                                .text_color(fg)
+                                .text_color(if name_active && !lit {
+                                    gpui_kit::white()
+                                } else {
+                                    fg
+                                })
                                 .child(name.to_string()),
                         )
                     })
@@ -175,26 +219,14 @@ impl RenderOnce for Keyboard {
                         .text_size(px(if self.large { 18. } else { 13. }))
                         .line_height(px(if self.large { 22. } else { 15. }))
                         .text_color(if self.large { fg } else { sub })
-                        .map(|this| {
-                            if self.large {
-                                this.children(
-                                    key_roots(key)
-                                        .iter()
-                                        .skip(1)
-                                        .map(|g| div().child(g.to_string())),
-                                )
-                            } else {
-                                let shown = key_roots_frequent(key);
-                                this.children(shown.iter().map(|g| div().child(g.to_string())))
-                                    .when(hidden > 0, |this| {
-                                        this.child(
-                                            div()
-                                                .font_family(theme.font_family.clone())
-                                                .text_size(px(10.))
-                                                .child(format!("+{hidden}")),
-                                        )
-                                    })
-                            }
+                        .children(shown.iter().map(|&g| glyph(g)))
+                        .when(hidden > 0, |this| {
+                            this.child(
+                                div()
+                                    .font_family(theme.font_family.clone())
+                                    .text_size(px(10.))
+                                    .child(format!("+{hidden}")),
+                            )
                         }),
                 )
                 .when(key == 'Z', |this| {
@@ -250,12 +282,7 @@ impl RenderOnce for Keyboard {
                                         .text_size(px(16.))
                                         .line_height(px(20.))
                                         .text_color(theme.foreground)
-                                        .children(
-                                            key_roots(key)
-                                                .iter()
-                                                .skip(1)
-                                                .map(|g| div().child(g.to_string())),
-                                        ),
+                                        .children(all.iter().skip(1).map(|&g| glyph(g))),
                                 ),
                         )
                         .with_priority(2),

@@ -1,4 +1,4 @@
-//! 查字：输入任意文字，逐字显示拆分；没有输入时显示字根键盘。
+//! 查字：输入任意文字，逐字显示拆分，并在字根键盘上标出用到的字根；没有输入时显示字根表。
 
 use std::rc::Rc;
 
@@ -10,6 +10,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::dict::Root;
 use crate::practice::is_cjk;
 use crate::store::Store;
 use crate::ui::decomp::{DecompCard, section_label};
@@ -64,6 +65,19 @@ impl Render for LookupView {
         }
         let truncated = seen.len() > MAX_CHARS;
         seen.truncate(MAX_CHARS);
+
+        // 计入编码的字根，在键盘上标出来。
+        let active_roots: Vec<Root> = seen
+            .iter()
+            .filter_map(|&c| self.store.dict.get(c))
+            .flat_map(|entry| {
+                entry
+                    .coded_root_indexes()
+                    .into_iter()
+                    .filter_map(|i| entry.roots.get(i).cloned())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
 
         let cards = seen.iter().map(|&c| {
             let body = match self.store.dict.get(c) {
@@ -135,7 +149,19 @@ impl Render for LookupView {
                                                 .text_color(theme.muted_foreground)
                                                 .child(format!("只显示前 {MAX_CHARS} 个字")),
                                         )
-                                    }),
+                                    })
+                                    .child(
+                                        v_flex()
+                                            .pt_4()
+                                            .gap_3()
+                                            .items_center()
+                                            .child(
+                                                Keyboard::new()
+                                                    .large(true)
+                                                    .active_roots(&active_roots),
+                                            )
+                                            .child(zone_legend(cx)),
+                                    ),
                             )
                         }
                     }),
@@ -161,15 +187,7 @@ fn root_chart(cx: &App) -> impl IntoElement {
                 ),
         )
         .child(Keyboard::new().large(true))
-        .child(
-            h_flex().gap_4().children(ZONE_NAMES.iter().enumerate().map(|(i, name)| {
-                h_flex()
-                    .gap_1p5()
-                    .items_center()
-                    .child(div().size(px(12.)).rounded(px(3.)).bg(zone_color(i, cx)))
-                    .child(div().text_sm().child(format!("{} {}", i + 1, name)))
-            })),
-        )
+        .child(zone_legend(cx))
         .child(
             v_flex()
                 .max_w(px(640.))
@@ -189,4 +207,14 @@ fn root_chart(cx: &App) -> impl IntoElement {
                     .map(|s| div().text_sm().line_height(px(20.)).child(s)),
                 ),
         )
+}
+
+fn zone_legend(cx: &App) -> impl IntoElement {
+    h_flex().gap_4().children(ZONE_NAMES.iter().enumerate().map(|(i, name)| {
+        h_flex()
+            .gap_1p5()
+            .items_center()
+            .child(div().size(px(12.)).rounded(px(3.)).bg(zone_color(i, cx)))
+            .child(div().text_sm().child(format!("{} {}", i + 1, name)))
+    }))
 }
