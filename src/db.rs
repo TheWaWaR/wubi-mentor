@@ -1,14 +1,18 @@
 //! SQLite 存储：字典、练习文本、进度、逐字熟练度与练习记录。
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::dict::{DICT_TSV, DICT_VERSION, Dictionary, Entry};
+use crate::scheme::Scheme;
 
+/// 逐字统计和练习记录按当前方案分开存。
 pub struct Db {
     conn: Connection,
+    scheme: Cell<Scheme>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -174,13 +178,15 @@ CREATE TABLE IF NOT EXISTS texts (
     last_practiced_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS char_stats (
-    ch        TEXT PRIMARY KEY,
+    scheme    TEXT NOT NULL DEFAULT 'wubi86',
+    ch        TEXT NOT NULL,
     seen      INTEGER NOT NULL DEFAULT 0,
     errors    INTEGER NOT NULL DEFAULT 0,
     missed    INTEGER NOT NULL DEFAULT 0,
     total_ms  INTEGER NOT NULL DEFAULT 0,
     streak    INTEGER NOT NULL DEFAULT 0,
-    last_seen INTEGER NOT NULL DEFAULT 0
+    last_seen INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (scheme, ch)
 );
 CREATE TABLE IF NOT EXISTS sessions (
     id         INTEGER PRIMARY KEY,
@@ -189,8 +195,29 @@ CREATE TABLE IF NOT EXISTS sessions (
     ended_at   INTEGER NOT NULL,
     active_ms  INTEGER NOT NULL,
     chars      INTEGER NOT NULL,
-    missed     INTEGER NOT NULL
+    missed     INTEGER NOT NULL,
+    scheme     TEXT NOT NULL DEFAULT 'wubi86'
 );
+";
+
+/// 只有五笔时建的库：`char_stats` 以字为主键、`sessions` 没有方案列，旧数据都算五笔。
+const MIGRATE_SCHEME: &str = "
+ALTER TABLE char_stats RENAME TO char_stats_old;
+CREATE TABLE char_stats (
+    scheme    TEXT NOT NULL DEFAULT 'wubi86',
+    ch        TEXT NOT NULL,
+    seen      INTEGER NOT NULL DEFAULT 0,
+    errors    INTEGER NOT NULL DEFAULT 0,
+    missed    INTEGER NOT NULL DEFAULT 0,
+    total_ms  INTEGER NOT NULL DEFAULT 0,
+    streak    INTEGER NOT NULL DEFAULT 0,
+    last_seen INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (scheme, ch)
+);
+INSERT INTO char_stats (scheme, ch, seen, errors, missed, total_ms, streak, last_seen)
+    SELECT 'wubi86', ch, seen, errors, missed, total_ms, streak, last_seen FROM char_stats_old;
+DROP TABLE char_stats_old;
+ALTER TABLE sessions ADD COLUMN scheme TEXT NOT NULL DEFAULT 'wubi86';
 ";
 
 /// 字典表跟着字典版本整表重建，所以单独建。
@@ -244,7 +271,23 @@ impl Db {
     fn init(conn: Connection) -> Result<Self> {
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
         conn.execute_batch(SCHEMA)?;
-        let db = Self { conn };
+        let has_scheme: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('sessions') WHERE name = 'scheme'",
+            [],
+            |r| r.get(0),
+        )?;
+        if !has_scheme {
+            let tx = conn.unchecked_transaction()?;
+            tx.execute_batch(MIGRATE_SCHEME)?;
+            tx.commit()?;
+        }
+        let db = Self {
+            conn,
+            scheme: Cell::new(Scheme::Wubi86),
+        };
+        if let Some(s) = db.meta("scheme")? {
+            db.scheme.set(Scheme::parse(&s));
+        }
         db.seed_dictionary()?;
         db.seed_texts()?;
         Ok(db)
@@ -420,6 +463,15 @@ impl Db {
         self.set_meta("current_text", &id.to_string())
     }
 
+    pub fn scheme(&self) -> Scheme {
+        self.scheme.get()
+    }
+
+    pub fn set_scheme(&self, scheme: Scheme) -> Result<()> {
+        self.scheme.set(scheme);
+        self.set_meta("scheme", scheme.as_str())
+    }
+
     pub fn hint_mode(&self) -> Result<HintMode> {
         Ok(self
             .meta("hint_mode")?
@@ -437,16 +489,24 @@ impl Db {
     pub fn record_char(&self, ch: char, ms: i64, errors: u32) -> Result<()> {
         let missed = i64::from(errors > 0);
         self.conn.execute(
-            "INSERT INTO char_stats (ch, seen, errors, missed, total_ms, streak, last_seen)
-             VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT(ch) DO UPDATE SET
+            "INSERT INTO char_stats (scheme, ch, seen, errors, missed, total_ms, streak, last_seen)
+             VALUES (?7, ?1, 1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(scheme, ch) DO UPDATE SET
                 seen = seen + 1,
                 errors = errors + excluded.errors,
                 missed = missed + excluded.missed,
                 total_ms = total_ms + excluded.total_ms,
                 streak = CASE WHEN excluded.missed > 0 THEN 0 ELSE streak + 1 END,
                 last_seen = excluded.last_seen",
-            params![ch.to_string(), errors, missed, ms, 1 - missed, now_ms()],
+            params![
+                ch.to_string(),
+                errors,
+                missed,
+                ms,
+                1 - missed,
+                now_ms(),
+                self.scheme().as_str()
+            ],
         )?;
         Ok(())
     }
@@ -456,8 +516,8 @@ impl Db {
             .conn
             .query_row(
                 "SELECT ch, seen, errors, missed, total_ms, streak, last_seen
-                 FROM char_stats WHERE ch = ?1",
-                [ch.to_string()],
+                 FROM char_stats WHERE scheme = ?1 AND ch = ?2",
+                [self.scheme().as_str(), &ch.to_string()],
                 row_to_stat,
             )
             .optional()?
@@ -469,9 +529,10 @@ impl Db {
 
     pub fn char_stats(&self) -> Result<Vec<CharStat>> {
         let mut stmt = self.conn.prepare(
-            "SELECT ch, seen, errors, missed, total_ms, streak, last_seen FROM char_stats",
+            "SELECT ch, seen, errors, missed, total_ms, streak, last_seen FROM char_stats
+             WHERE scheme = ?1",
         )?;
-        let rows = stmt.query_map([], row_to_stat)?;
+        let rows = stmt.query_map([self.scheme().as_str()], row_to_stat)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -504,9 +565,17 @@ impl Db {
         missed: i64,
     ) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO sessions (text_id, started_at, ended_at, active_ms, chars, missed)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![text_id, started_at, ended_at, active_ms, chars, missed],
+            "INSERT INTO sessions (text_id, started_at, ended_at, active_ms, chars, missed, scheme)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                text_id,
+                started_at,
+                ended_at,
+                active_ms,
+                chars,
+                missed,
+                self.scheme().as_str()
+            ],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -515,9 +584,10 @@ impl Db {
         let mut stmt = self.conn.prepare(
             "SELECT s.id, s.text_id, t.title, s.started_at, s.ended_at, s.active_ms, s.chars, s.missed
              FROM sessions s LEFT JOIN texts t ON t.id = s.text_id
+             WHERE s.scheme = ?2
              ORDER BY s.started_at DESC LIMIT ?1",
         )?;
-        let rows = stmt.query_map([limit as i64], |r| {
+        let rows = stmt.query_map(params![limit as i64, self.scheme().as_str()], |r| {
             Ok(Session {
                 id: r.get(0)?,
                 text_id: r.get(1)?,
@@ -629,6 +699,44 @@ mod tests {
         assert_eq!(s.text_title.as_deref(), Some("标题"));
         assert_eq!(s.speed(), 30.0);
         assert!((s.accuracy() - 0.9).abs() < 1e-9);
+    }
+
+    #[test]
+    fn stats_are_per_scheme() {
+        let db = Db::open_in_memory().unwrap();
+        db.record_char('我', 1000, 0).unwrap();
+        db.insert_session(None, 0, 1000, 1000, 1, 0).unwrap();
+        db.set_scheme(Scheme::Cangjie5).unwrap();
+        assert_eq!(db.char_stat('我').unwrap().seen, 0);
+        assert!(db.sessions(10).unwrap().is_empty());
+        db.record_char('我', 1000, 1).unwrap();
+        assert_eq!(db.char_stats().unwrap().len(), 1);
+        db.set_scheme(Scheme::Wubi86).unwrap();
+        assert_eq!(db.char_stat('我').unwrap().errors, 0);
+        assert_eq!(db.sessions(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn migrates_single_scheme_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE char_stats (ch TEXT PRIMARY KEY, seen INTEGER NOT NULL DEFAULT 0,
+                errors INTEGER NOT NULL DEFAULT 0, missed INTEGER NOT NULL DEFAULT 0,
+                total_ms INTEGER NOT NULL DEFAULT 0, streak INTEGER NOT NULL DEFAULT 0,
+                last_seen INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE sessions (id INTEGER PRIMARY KEY, text_id INTEGER, started_at INTEGER NOT NULL,
+                ended_at INTEGER NOT NULL, active_ms INTEGER NOT NULL, chars INTEGER NOT NULL,
+                missed INTEGER NOT NULL);
+             INSERT INTO char_stats (ch, seen) VALUES ('我', 5);
+             INSERT INTO sessions (started_at, ended_at, active_ms, chars, missed) VALUES (0, 1, 1, 1, 0);",
+        )
+        .unwrap();
+        let db = Db::init(conn).unwrap();
+        assert_eq!(db.scheme(), Scheme::Wubi86);
+        assert_eq!(db.char_stat('我').unwrap().seen, 5);
+        assert_eq!(db.sessions(10).unwrap().len(), 1);
+        db.set_scheme(Scheme::Cangjie5).unwrap();
+        assert_eq!(db.char_stat('我').unwrap().seen, 0);
     }
 
     #[test]

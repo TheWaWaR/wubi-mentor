@@ -15,7 +15,7 @@ use gpui_kit::*;
 use crate::db::{CharStat, HintMode, Mastery, Text, now_ms};
 use crate::practice::{Mark, Outcome, Practice};
 use crate::store::Store;
-use crate::ui::decomp::{DecompCard, big_char, mastery_color, section_label};
+use crate::ui::decomp::{big_char, char_card, mastery_color, section_label};
 use crate::ui::keyboard::Keyboard;
 
 actions!(practice, [PeekHint, SkipChar]);
@@ -123,7 +123,7 @@ impl PracticeView {
             return;
         };
         let store = self.store.clone();
-        let practice = Practice::new(&text.content, text.position, |c| store.dict.contains(c));
+        let practice = Practice::new(&text.content, text.position, |c| store.contains(c));
         self.pages = paginate(practice.chars());
         self.practice = Some(practice);
         self.text = Some(text);
@@ -137,6 +137,23 @@ impl PracticeView {
         let _ = self.store.db.set_current_text_id(id);
         self.scroll_to_current();
         cx.notify();
+    }
+
+    /// 切换方案：存下这次练习，按新方案重新读入统计和当前文本（要打的字可能不同）。
+    pub fn scheme_changed(&mut self, cx: &mut Context<Self>) {
+        self.end_session();
+        self.stats = self
+            .store
+            .db
+            .char_stats()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| (s.ch, s))
+            .collect();
+        match self.text_id() {
+            Some(id) => self.load_text(id, cx),
+            None => cx.notify(),
+        }
     }
 
     /// 文本被编辑或删除后，重新读取当前文本。
@@ -268,7 +285,13 @@ impl PracticeView {
             return;
         }
         if !text.is_empty() && text.chars().all(|c| c.is_ascii_alphabetic()) {
-            self.notice = Some("打出来的是英文字母，请先切换到系统的五笔输入法。".into());
+            self.notice = Some(
+                format!(
+                    "打出来的是英文字母，请先切换到系统的{}输入法。",
+                    self.store.scheme().ime()
+                )
+                .into(),
+            );
             cx.notify();
             return;
         }
@@ -766,7 +789,10 @@ impl PracticeView {
                     .text_xs()
                     .text_color(theme.muted_foreground)
                     .child(if focused {
-                        div().child("用五笔输入法直接打字 · Tab 看拆分 · ⌘J 跳过 · 点字查看")
+                        div().child(format!(
+                            "用{}输入法直接打字 · Tab 看拆分 · ⌘J 跳过 · 点字查看",
+                            self.store.scheme().ime()
+                        ))
                     } else {
                         div()
                             .text_color(theme.warning)
@@ -864,22 +890,22 @@ impl PracticeView {
             .inspect
             .or_else(|| p.filter(|p| !p.is_finished()).map(|p| p.position()));
         let ch = index.and_then(|i| p.and_then(|p| p.chars().get(i).copied()));
-        let entry = ch.and_then(|c| self.store.dict.get(c).cloned());
+        let entry = ch.and_then(|c| self.store.lookup(c));
         let show = self.inspect.is_some() || self.hint_visible();
 
         let body =
             match (entry, show) {
                 (Some(entry), true) => {
-                    let stat = self.stats.get(&entry.ch).cloned().unwrap_or(CharStat {
-                        ch: entry.ch,
+                    let stat = self.stats.get(&entry.ch()).cloned().unwrap_or(CharStat {
+                        ch: entry.ch(),
                         ..Default::default()
                     });
-                    DecompCard::new(entry).stat(stat).into_any_element()
+                    char_card(entry, Some(stat))
                 }
                 (Some(entry), false) => v_flex()
                     .gap_3()
                     .items_start()
-                    .child(big_char(entry.ch, 96., cx))
+                    .child(big_char(entry.ch(), 96., cx))
                     .child(
                         div()
                             .text_sm()
@@ -1000,9 +1026,9 @@ impl Render for PracticeView {
             .or_else(|| p.filter(|p| !p.is_finished()).map(|p| p.position()));
         let code = index
             .and_then(|i| p.and_then(|p| p.chars().get(i).copied()))
-            .and_then(|c| self.store.dict.get(c))
+            .and_then(|c| self.store.lookup(c))
             .filter(|_| self.inspect.is_some() || self.hint_visible())
-            .map(|e| e.full_code.clone())
+            .map(|e| e.code().to_string())
             .unwrap_or_default();
 
         v_flex()
@@ -1023,7 +1049,7 @@ impl Render for PracticeView {
                     .border_t_1()
                     .border_color(theme.border)
                     .bg(theme.sidebar)
-                    .child(Keyboard::new().highlight(&code)),
+                    .child(Keyboard::new(self.store.scheme()).highlight(&code)),
             )
     }
 }

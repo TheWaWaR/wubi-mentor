@@ -63,6 +63,7 @@ pub fn run(window: AnyWindowHandle, main: Entity<MainView>, dir: std::path::Path
                 "mark" => step(cx, &name, &move |m, _, cx| m.debug_mark(&arg, cx)).await,
                 "hint" => step(cx, &name, &move |m, _, cx| m.debug_hint(&arg, cx)).await,
                 "lookup" => step(cx, &name, &move |m, w, cx| m.debug_lookup(&arg, w, cx)).await,
+                "scheme" => step(cx, &name, &move |m, w, cx| m.debug_scheme(&arg, w, cx)).await,
                 "inspect" => {
                     step(cx, &name, &move |m, _, cx| {
                         m.debug_inspect(arg.parse().unwrap_or(0), cx)

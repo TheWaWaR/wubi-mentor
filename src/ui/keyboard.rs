@@ -1,4 +1,4 @@
-//! 86 版五笔虚拟键盘：五个区的底色、键名字根、常用字根，以及当前编码的高亮。
+//! 虚拟键盘：分区底色、键名字根、常用字根（五笔）或辅助字形（仓颉），以及当前编码的高亮。
 
 use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -6,16 +6,9 @@ use gpui_kit::*;
 
 use std::collections::HashSet;
 
+use crate::cangjie;
 use crate::dict::{KEY_ROWS, ROOT_FONT, Root, key_name, key_roots, key_roots_frequent};
-
-/// 五笔的五个区：横、竖、撇、捺、折。
-pub fn zone_of(key: char) -> Option<usize> {
-    ["GFDSA", "HJKLM", "TREWQ", "YUIOP", "NBVCX"]
-        .iter()
-        .position(|z| z.contains(key))
-}
-
-pub const ZONE_NAMES: [&str; 5] = ["横区", "竖区", "撇区", "捺区", "折区"];
+use crate::scheme::Scheme;
 
 /// 每个区的颜色（色相），键位底色和字根标签共用。
 pub fn zone_color(zone: usize, cx: &App) -> Hsla {
@@ -25,9 +18,10 @@ pub fn zone_color(zone: usize, cx: &App) -> Hsla {
 
 #[derive(IntoElement)]
 pub struct Keyboard {
+    scheme: Scheme,
     /// 要高亮的键和它在编码中的序号（从 1 开始）。
     highlights: Vec<(char, usize)>,
-    /// 激活的字根（字根字体字形）和它们所在的键，在键盘上标出来。
+    /// 激活的字根（五笔是字根字体字形，仓颉是部件字形）和它们所在的键，在键盘上标出来。
     active_glyphs: HashSet<char>,
     active_keys: HashSet<char>,
     /// 大键帽，显示该键的全部字根（字根表用）；否则只显示最常用的几个。
@@ -35,8 +29,9 @@ pub struct Keyboard {
 }
 
 impl Keyboard {
-    pub fn new() -> Self {
+    pub fn new(scheme: Scheme) -> Self {
         Self {
+            scheme,
             highlights: Vec::new(),
             active_glyphs: HashSet::new(),
             active_keys: HashSet::new(),
@@ -53,6 +48,15 @@ impl Keyboard {
         for root in roots {
             self.active_keys.insert(root.key);
             self.active_glyphs.extend(root.font_glyph);
+        }
+        self
+    }
+
+    /// 仓颉：激活的部件字形和它们所在的键。
+    pub fn active_shapes(mut self, shapes: impl IntoIterator<Item = (char, char)>) -> Self {
+        for (glyph, key) in shapes {
+            self.active_keys.insert(key);
+            self.active_glyphs.insert(glyph);
         }
         self
     }
@@ -77,11 +81,13 @@ impl RenderOnce for Keyboard {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme().clone();
         let any_highlight = !self.highlights.is_empty() || !self.active_keys.is_empty();
+        let wubi = self.scheme == Scheme::Wubi86;
         let hover = window.use_keyed_state(
-            if self.large {
-                "keyboard-hover-large"
-            } else {
-                "keyboard-hover"
+            match (self.large, wubi) {
+                (true, true) => "keyboard-hover-large",
+                (false, true) => "keyboard-hover",
+                (true, false) => "keyboard-hover-large-cj",
+                (false, false) => "keyboard-hover-cj",
             },
             cx,
             |_, _| HoverState::default(),
@@ -98,7 +104,7 @@ impl RenderOnce for Keyboard {
                 .map(|(_, i)| i.to_string())
                 .collect();
             let lit = !orders.is_empty();
-            let zone = zone_of(key);
+            let zone = self.scheme.zone_of(key);
             let tint = zone
                 .map(|z| zone_color(z, cx))
                 .unwrap_or(theme.muted_foreground);
@@ -122,20 +128,35 @@ impl RenderOnce for Keyboard {
             } else {
                 theme.muted_foreground
             };
-            let all = key_roots(key);
+            // 键名字根的字形，以及键上其余的字根（五笔）或辅助字形（仓颉）。
+            let (name, name_glyph, all): (Option<char>, Option<char>, &[char]) = if wubi {
+                let roots = key_roots(key);
+                (
+                    key_name(key),
+                    roots.first().copied(),
+                    roots.get(1..).unwrap_or_default(),
+                )
+            } else {
+                let name = cangjie::root_name(key);
+                (name, name, cangjie::key_shapes(key))
+            };
             let is_active = |g: char| self.active_glyphs.contains(&g);
             // 小键帽只显示常用字根，再加上激活的字根。
-            let shown: Vec<char> = if self.large {
-                all.iter().skip(1).copied().collect()
+            let shown: Vec<char> = if self.large || !wubi {
+                all.to_vec()
             } else {
                 let frequent = key_roots_frequent(key);
                 all.iter()
-                    .skip(1)
                     .copied()
                     .filter(|g| frequent.contains(g) || is_active(*g))
                     .collect()
             };
-            let hidden = all.len().saturating_sub(1 + shown.len());
+            let hidden = all.len().saturating_sub(shown.len());
+            let glyph_font = if wubi {
+                SharedString::from(ROOT_FONT)
+            } else {
+                theme.font_family.clone()
+            };
             // 一个字根字形；激活的用区色实底标出。
             let glyph = |g: char| {
                 div()
@@ -147,7 +168,7 @@ impl RenderOnce for Keyboard {
                     })
                     .child(g.to_string())
             };
-            let name_active = all.first().is_some_and(|g| is_active(*g));
+            let name_active = name_glyph.is_some_and(is_active);
             let header = |name_size_large: bool, fg: Hsla, sub: Hsla| {
                 h_flex()
                     .justify_between()
@@ -159,7 +180,7 @@ impl RenderOnce for Keyboard {
                             .text_color(sub)
                             .child(key.to_string()),
                     )
-                    .when_some(key_name(key), |this, name| {
+                    .when_some(name, |this, name| {
                         this.child(
                             div()
                                 .when(name_active && !lit, |d| {
@@ -199,7 +220,12 @@ impl RenderOnce for Keyboard {
                     })
                 })
                 .w(px(if self.large { 92. } else { 88. }))
-                .min_h(px(if self.large { 136. } else { 84. }))
+                // 仓颉的辅助字形少，大键帽不用那么高。
+                .min_h(px(match (self.large, wubi) {
+                    (true, true) => 136.,
+                    (true, false) => 96.,
+                    _ => 84.,
+                }))
                 .px_1p5()
                 .py_1()
                 .gap_0p5()
@@ -215,7 +241,7 @@ impl RenderOnce for Keyboard {
                         .flex_wrap()
                         .gap_x(px(if self.large { 4. } else { 2. }))
                         .pt(px(if self.large { 4. } else { 2. }))
-                        .font_family(ROOT_FONT)
+                        .font_family(glyph_font.clone())
                         .text_size(px(if self.large { 18. } else { 13. }))
                         .line_height(px(if self.large { 22. } else { 15. }))
                         .text_color(if self.large { fg } else { sub })
@@ -229,8 +255,15 @@ impl RenderOnce for Keyboard {
                             )
                         }),
                 )
-                .when(key == 'Z', |this| {
-                    this.child(div().text_size(px(10.)).text_color(sub).child("学习键"))
+                .map(|this| match (self.scheme, key) {
+                    (Scheme::Wubi86, 'Z') => {
+                        this.child(div().text_size(px(10.)).text_color(sub).child("学习键"))
+                    }
+                    (Scheme::Cangjie5, 'X') => {
+                        this.child(div().text_size(px(10.)).text_color(sub).child("难字键"))
+                    }
+                    (Scheme::Cangjie5, 'Z') => this.opacity(0.4),
+                    _ => this,
                 })
                 // 折叠的键：鼠标停上去时原地展开，盖住相邻的键，显示全部字根。
                 .when(expanded == Some(key) && hidden > 0, |this| {
@@ -278,11 +311,11 @@ impl RenderOnce for Keyboard {
                                         .flex()
                                         .flex_wrap()
                                         .gap_x(px(4.))
-                                        .font_family(ROOT_FONT)
+                                        .font_family(glyph_font.clone())
                                         .text_size(px(16.))
                                         .line_height(px(20.))
                                         .text_color(theme.foreground)
-                                        .children(all.iter().skip(1).map(|&g| glyph(g))),
+                                        .children(all.iter().map(|&g| glyph(g))),
                                 ),
                         )
                         .with_priority(2),

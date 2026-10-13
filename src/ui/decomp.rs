@@ -6,7 +6,10 @@ use gpui_kit::*;
 
 use crate::db::{CharStat, Mastery};
 use crate::dict::{CharKind, CodePart, Entry, ROOT_FONT, Root, display_glyph, is_single_stroke};
-use crate::ui::keyboard::{zone_color, zone_of};
+use crate::scheme::Scheme;
+use crate::store::Lookup;
+use crate::ui::cangjie_card::CangjieCard;
+use crate::ui::keyboard::zone_color;
 
 #[derive(IntoElement)]
 pub struct DecompCard {
@@ -25,8 +28,9 @@ impl DecompCard {
     }
 }
 
-fn key_tint(key: char, cx: &App) -> Hsla {
-    zone_of(key)
+pub fn key_tint(scheme: Scheme, key: char, cx: &App) -> Hsla {
+    scheme
+        .zone_of(key)
         .map(|z| zone_color(z, cx))
         .unwrap_or(cx.theme().muted_foreground)
 }
@@ -88,7 +92,7 @@ pub fn root_glyph(glyph: char, size: f32) -> Div {
 pub fn root_chip(root: &Root, coded: bool, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
     let key = root.key;
-    let tint = key_tint(key, cx);
+    let tint = key_tint(Scheme::Wubi86, key, cx);
     let glyph = display_glyph(&root.glyph);
     let descriptive = glyph.chars().count() > 1;
     v_flex()
@@ -170,6 +174,18 @@ fn rule_text(entry: &Entry) -> String {
     }
 }
 
+/// 当前方案下的拆字卡。
+pub fn char_card(lookup: Lookup, stat: Option<CharStat>) -> AnyElement {
+    match lookup {
+        Lookup::Wubi(e) => DecompCard::new(e.clone())
+            .when_some(stat, |card, stat| card.stat(stat))
+            .into_any_element(),
+        Lookup::Cangjie(e) => CangjieCard::new(e.clone())
+            .when_some(stat, |card, stat| card.stat(stat))
+            .into_any_element(),
+    }
+}
+
 impl RenderOnce for DecompCard {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme().clone();
@@ -181,7 +197,7 @@ impl RenderOnce for DecompCard {
             .gap_1p5()
             .children(parts.iter().enumerate().map(|(i, part)| {
                 let key = part.key();
-                let tint = key_tint(key, cx);
+                let tint = key_tint(Scheme::Wubi86, key, cx);
                 let is_extra = !matches!(part, CodePart::Root { .. });
                 v_flex()
                     .id(("code-part", i))
@@ -348,7 +364,7 @@ pub fn mastery_color(m: Mastery, cx: &App) -> Hsla {
     }
 }
 
-fn stat_row(stat: &CharStat, cx: &App) -> impl IntoElement {
+pub fn stat_row(stat: &CharStat, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
     let m = stat.mastery();
     let text = if stat.seen == 0 {

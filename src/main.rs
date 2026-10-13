@@ -1,6 +1,8 @@
+mod cangjie;
 mod db;
 mod dict;
 mod practice;
+mod scheme;
 #[cfg(feature = "snapshot")]
 mod snapshot;
 mod store;

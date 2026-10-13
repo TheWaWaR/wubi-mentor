@@ -1,6 +1,6 @@
 # 字根学堂（zigen）
 
-学习 86 版五笔拆字的 macOS 桌面程序，基于 [GPUI Fast](https://github.com/longbridge/gpui-fast)
+学习 86 版五笔和第五代仓颉拆字的 macOS 桌面程序，基于 [GPUI Fast](https://github.com/longbridge/gpui-fast)
 和 [GPUI Kit](https://github.com/longbridge/gpui-kit)。
 
 灵感来自 [wongsingfo/86wubi](https://github.com/wongsingfo/86wubi)：用自己的文本练习，
@@ -13,6 +13,10 @@
 - **文本库**：新建、粘贴、编辑练习文本；一键用最近的薄弱字生成“错字重练”。
 - **查字**：输入任意文字逐字显示拆分；空白时显示 86 版字根键盘和取码规则速记。
 - **统计**：累计字数和用时、速度/一次打对率曲线、每次练习记录、薄弱字。
+
+侧栏「输入方案」可在五笔 86 版和仓颉第五代之间切换：拆字卡、键盘、字根表跟着换，
+逐字熟练度和练习记录按方案分开统计（文本和进度两边共用）。仓颉拆字卡显示每一码的字根、
+字首／字身部件，以及部件在字里的取码和它单独成字时不同的情况（如「我」的手取 HQ，单独打 Q）。
 
 ## 运行
 
@@ -30,9 +34,9 @@ cargo run --release
 | --- | --- |
 | `chars` | 86 版字典：全码、简码、类别、字根拆分、识别码（首次启动时从 `data/wubi86.tsv` 导入） |
 | `texts` | 练习文本和每篇的当前进度 |
-| `char_stats` | 每个字的练习次数、出错次数、用时、连对次数（据此判断掌握程度） |
-| `sessions` | 每次练习的字数、有效用时、一次打对数 |
-| `meta` | 设置（当前文本、提示模式）和字典版本 |
+| `char_stats` | 每个方案下每个字的练习次数、出错次数、用时、连对次数（据此判断掌握程度） |
+| `sessions` | 每次练习的方案、字数、有效用时、一次打对数 |
+| `meta` | 设置（当前文本、提示模式、输入方案）和字典版本 |
 
 `data/wubi86.tsv` 由 `scripts/build_dict.py` 生成：
 
@@ -49,11 +53,19 @@ Unicode 私用区。字体和逐码字形数据（`wb_spelling.dict.yaml`）来�
 参与编码的字根直接用逐码字形，中间不取码的字根按全库统计映射到最常对应的字形。
 上述来源都没有声明许可证，自用没问题，公开发布前请留意。
 
+仓颉数据 `data/cangjie5.tsv` 由 `scripts/build_cangjie.py` 生成，直接编进程序（不入库）：
+
+- 编码来自 [rime/rime-cangjie](https://github.com/rime/rime-cangjie) 的 `cangjie5.base.dict.yaml`（GPL）；
+- 字首／字身拆分用 [amake/cjk-decomp](https://github.com/amake/cjk-decomp) 的字形结构推出来，
+  再用各部件单独成字的编码印证；2 万多字里约 94% 能拆出字首字身，整体字约 3%，其余只逐码讲解；
+- `data/cangjie5_keys.tsv` 是从拆分里统计出的每个键上常见的辅助字形。
+
 重新生成数据：
 
 ```bash
 python3 scripts/build_dict.py <下载目录> data/wubi86.tsv "$(cat scripts/traditional_roots.txt)"
 python3 scripts/patch_root_font.py <黑体字根.ttf> assets/fonts/wubi-roots.ttf
+python3 scripts/build_cangjie.py <下载目录> data/cangjie5.tsv
 ```
 
 ## 开发
@@ -62,6 +74,6 @@ python3 scripts/patch_root_font.py <黑体字根.ttf> assets/fonts/wubi-roots.tt
 cargo test
 # 按脚本操作界面并把每一步渲染成 PNG（不需要屏幕录制权限）
 ZIGEN_DB=/tmp/snap.db ZIGEN_SNAPSHOT=/tmp/snap \
-ZIGEN_SNAPSHOT_SCRIPT="open 常用字; type 学习五笔; mark rqyy; lookup 照键; page stats" \
+ZIGEN_SNAPSHOT_SCRIPT="open 常用字; type 学习五笔; mark rqyy; lookup 照键; scheme cangjie5; lookup 我们; page stats" \
 cargo run --features snapshot
 ```

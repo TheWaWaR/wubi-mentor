@@ -98,7 +98,7 @@ impl LibraryView {
     }
 
     pub fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let dict = &self.store.dict;
+        let store = &self.store;
         self.texts = self
             .store
             .db
@@ -109,7 +109,7 @@ impl LibraryView {
                 let mut targets = 0;
                 let mut done = 0;
                 for (i, c) in text.content.chars().enumerate() {
-                    if dict.contains(c) {
+                    if store.contains(c) {
                         targets += 1;
                         if i < text.position {
                             done += 1;
@@ -348,9 +348,9 @@ impl Render for LibraryView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let content = self.content.read(cx).value();
-        let dict = &self.store.dict;
+        let store = &self.store;
         let total = content.chars().filter(|c| !c.is_whitespace()).count();
-        let targets = content.chars().filter(|c| dict.contains(*c)).count();
+        let targets = content.chars().filter(|c| store.contains(*c)).count();
         let editing_title = match (self.editing, self.dirty) {
             (None, _) => "新建文本",
             (Some(_), true) => "编辑中 · 未保存",

@@ -1,5 +1,6 @@
 //! 主窗口：左侧导航 + 页面。
 
+mod cangjie_card;
 mod decomp;
 mod keyboard;
 mod library;
@@ -16,6 +17,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::*;
 
+use crate::scheme::Scheme;
 use crate::store::Store;
 use library::{LibraryEvent, LibraryView};
 use lookup::LookupView;
@@ -45,6 +47,7 @@ pub(crate) enum Page {
 }
 
 pub struct MainView {
+    store: Rc<Store>,
     page: Page,
     practice: Entity<PracticeView>,
     library: Entity<LibraryView>,
@@ -98,6 +101,7 @@ impl MainView {
         });
 
         let view = Self {
+            store,
             page: Page::Practice,
             practice,
             library,
@@ -107,6 +111,24 @@ impl MainView {
         };
         window.focus(&view.practice.focus_handle(cx), cx);
         view
+    }
+
+    /// 切换输入方案：字典、拆字卡、键盘和统计都跟着换。
+    pub(crate) fn set_scheme(
+        &mut self,
+        scheme: Scheme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.store.scheme() == scheme {
+            return;
+        }
+        // 先按旧方案存下正在进行的练习。
+        self.practice.update(cx, |p, _| p.end_session());
+        let _ = self.store.db.set_scheme(scheme);
+        self.practice.update(cx, |p, cx| p.scheme_changed(cx));
+        let page = self.page;
+        self.go(page, window, cx);
     }
 
     pub(crate) fn go(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
@@ -172,6 +194,10 @@ impl MainView {
         self.practice.update(cx, |p, cx| p.debug_inspect(index, cx));
     }
 
+    pub(crate) fn debug_scheme(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_scheme(Scheme::parse(name), window, cx);
+    }
+
     pub(crate) fn debug_lookup(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.lookup
             .update(cx, |l, cx| l.set_query(text, window, cx));
@@ -182,6 +208,7 @@ impl MainView {
 impl Render for MainView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        let scheme = self.store.scheme();
         let item = |label: &'static str, icon: IconName, page: Page, cx: &mut Context<Self>| {
             SidebarMenuItem::new(label)
                 .icon(icon)
@@ -205,7 +232,7 @@ impl Render for MainView {
                                 .items_center()
                                 .justify_center()
                                 .font_weight(FontWeight::BOLD)
-                                .child("五"),
+                                .child(scheme.logo()),
                         )
                         .child(
                             v_flex()
@@ -214,7 +241,7 @@ impl Render for MainView {
                                     div()
                                         .text_xs()
                                         .text_color(theme.muted_foreground)
-                                        .child("86 版"),
+                                        .child(scheme.label()),
                                 ),
                         ),
                 ),
@@ -227,6 +254,17 @@ impl Render for MainView {
                         .child(item("查字", IconName::Search, Page::Lookup, cx))
                         .child(item("统计", IconName::ChartPie, Page::Stats, cx)),
                 ),
+            )
+            .child(
+                SidebarGroup::new("输入方案").child(SidebarMenu::new().children(Scheme::ALL.map(
+                    |s| {
+                        SidebarMenuItem::new(s.label())
+                            .active(s == scheme)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.set_scheme(s, window, cx)
+                            }))
+                    },
+                ))),
             );
 
         let content = match self.page {
