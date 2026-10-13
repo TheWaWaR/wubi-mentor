@@ -1,6 +1,6 @@
 //! SQLite 存储：字典、练习文本、进度、逐字熟练度与练习记录。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -250,15 +250,16 @@ impl Db {
         Ok(db)
     }
 
-    /// 默认在 `~/Library/Application Support/wubi-mentor/wubi.db`；可用 `WUBI_DB` 覆盖。
-    pub fn default_path() -> std::path::PathBuf {
-        if let Some(path) = std::env::var_os("WUBI_DB") {
-            return path.into();
+    /// 默认在 `~/Library/Application Support/zigen/zigen.db`；可用 `ZIGEN_DB` 覆盖。
+    /// 旧版（wubi-mentor）的数据库会在第一次用默认路径时搬过来。
+    pub fn default_path() -> Result<PathBuf> {
+        if let Some(path) = std::env::var_os("ZIGEN_DB") {
+            return Ok(path.into());
         }
-        dirs::data_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("wubi-mentor")
-            .join("wubi.db")
+        let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
+        let path = base.join("zigen").join("zigen.db");
+        migrate_legacy(&base.join("wubi-mentor").join("wubi.db"), &path)?;
+        Ok(path)
     }
 
     fn meta(&self, key: &str) -> Result<Option<String>> {
@@ -555,6 +556,29 @@ fn row_to_stat(r: &rusqlite::Row) -> rusqlite::Result<CharStat> {
     })
 }
 
+/// 把旧数据库（连同 WAL 的 `-wal`/`-shm` 文件）改名搬到新路径；新路径已存在或旧库不存在时什么都不做。
+fn migrate_legacy(old: &Path, new: &Path) -> Result<()> {
+    if new.exists() || !old.exists() {
+        return Ok(());
+    }
+    if let Some(dir) = new.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    }
+    // 先搬 -wal/-shm，最后搬主库：中途失败时新路径上没有主库，下次启动会重试。
+    for suffix in ["-wal", "-shm", ""] {
+        let from = PathBuf::from(format!("{}{suffix}", old.display()));
+        let to = PathBuf::from(format!("{}{suffix}", new.display()));
+        if from.exists() {
+            std::fs::rename(&from, &to)
+                .with_context(|| format!("move {} to {}", from.display(), to.display()))?;
+        }
+    }
+    if let Some(dir) = old.parent() {
+        let _ = std::fs::remove_dir(dir); // 只删空目录
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -605,5 +629,24 @@ mod tests {
         assert_eq!(s.text_title.as_deref(), Some("标题"));
         assert_eq!(s.speed(), 30.0);
         assert!((s.accuracy() - 0.9).abs() < 1e-9);
+    }
+
+    #[test]
+    fn migrates_legacy_database() {
+        let root = std::env::temp_dir().join(format!("zigen-migrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let old = root.join("wubi-mentor").join("wubi.db");
+        let new = root.join("zigen").join("zigen.db");
+        {
+            let db = Db::open(&old).unwrap();
+            db.insert_text("旧文本", "内容").unwrap();
+        }
+        migrate_legacy(&old, &new).unwrap();
+        assert!(!old.parent().unwrap().exists());
+        let db = Db::open(&new).unwrap();
+        assert!(db.texts().unwrap().iter().any(|t| t.title == "旧文本"));
+        // 新库已存在时不再动旧路径。
+        migrate_legacy(&old, &new).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

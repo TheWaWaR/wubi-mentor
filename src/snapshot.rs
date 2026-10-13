@@ -1,4 +1,4 @@
-//! 开发用：按脚本操作界面，把每一步渲染成 PNG（`WUBI_SNAPSHOT=目录`）。
+//! 开发用：按脚本操作界面，把每一步渲染成 PNG（`ZIGEN_SNAPSHOT=目录`）。
 
 use std::time::Duration;
 
@@ -37,7 +37,7 @@ pub fn run(window: AnyWindowHandle, main: Entity<MainView>, dir: std::path::Path
         cx.background_executor()
             .timer(Duration::from_millis(1200))
             .await;
-        let script = std::env::var("WUBI_SNAPSHOT_SCRIPT").unwrap_or_default();
+        let script = std::env::var("ZIGEN_SNAPSHOT_SCRIPT").unwrap_or_default();
         for (i, cmd) in script
             .split(';')
             .map(str::trim)

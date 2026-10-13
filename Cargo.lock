@@ -8405,19 +8405,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
-name = "wubi-mentor"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dirs 6.0.0",
- "gpui-fast",
- "gpui-fast-macos",
- "gpui-kit",
- "image",
- "rusqlite",
-]
-
-[[package]]
 name = "x11"
 version = "2.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8835,6 +8822,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "zigen"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs 6.0.0",
+ "gpui-fast",
+ "gpui-fast-macos",
+ "gpui-kit",
+ "image",
+ "rusqlite",
 ]
 
 [[package]]

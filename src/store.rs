@@ -12,7 +12,7 @@ pub struct Store {
 
 impl Store {
     pub fn open() -> Result<Self> {
-        let db = Db::open(&Db::default_path())?;
+        let db = Db::open(&Db::default_path()?)?;
         let dict = db.load_dictionary()?;
         Ok(Self { db, dict })
     }

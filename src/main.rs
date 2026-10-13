@@ -29,7 +29,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(1100.), px(760.))),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("五笔学堂".into()),
+                    title: Some("字根学堂".into()),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -39,7 +39,7 @@ fn main() {
             })
             .expect("failed to open window");
             #[cfg(feature = "snapshot")]
-            if let Some(dir) = std::env::var_os("WUBI_SNAPSHOT") {
+            if let Some(dir) = std::env::var_os("ZIGEN_SNAPSHOT") {
                 snapshot::run(_window, _main, dir.into(), cx);
             }
             cx.activate(true);

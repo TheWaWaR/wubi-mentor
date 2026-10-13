@@ -22,7 +22,7 @@ use lookup::LookupView;
 use practice::{PracticeEvent, PracticeView};
 use stats::{StatsEvent, StatsView};
 
-actions!(wubi_mentor, [Quit]);
+actions!(zigen, [Quit]);
 
 pub fn init(cx: &mut App) {
     // 字根字体：字根和变形部件在私用区里。
@@ -209,7 +209,7 @@ impl Render for MainView {
                         )
                         .child(
                             v_flex()
-                                .child(div().font_weight(FontWeight::SEMIBOLD).child("五笔学堂"))
+                                .child(div().font_weight(FontWeight::SEMIBOLD).child("字根学堂"))
                                 .child(
                                     div()
                                         .text_xs()

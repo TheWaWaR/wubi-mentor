@@ -1,4 +1,4 @@
-# 五笔学堂（wubi-mentor）
+# 字根学堂（zigen）
 
 学习 86 版五笔拆字的 macOS 桌面程序，基于 [GPUI Fast](https://github.com/longbridge/gpui-fast)
 和 [GPUI Kit](https://github.com/longbridge/gpui-kit)。
@@ -24,7 +24,7 @@ cargo run --release
 
 ## 数据
 
-所有数据都在 SQLite 里：`~/Library/Application Support/wubi-mentor/wubi.db`（可用环境变量 `WUBI_DB` 指定）。
+所有数据都在 SQLite 里：`~/Library/Application Support/zigen/zigen.db`（可用环境变量 `ZIGEN_DB` 指定；旧版 `wubi-mentor/wubi.db` 会在首次启动时自动搬过来）。
 
 | 表 | 内容 |
 | --- | --- |
@@ -61,7 +61,7 @@ python3 scripts/patch_root_font.py <黑体字根.ttf> assets/fonts/wubi-roots.tt
 ```bash
 cargo test
 # 按脚本操作界面并把每一步渲染成 PNG（不需要屏幕录制权限）
-WUBI_DB=/tmp/snap.db WUBI_SNAPSHOT=/tmp/snap \
-WUBI_SNAPSHOT_SCRIPT="open 常用字; type 学习五笔; mark rqyy; lookup 照键; page stats" \
+ZIGEN_DB=/tmp/snap.db ZIGEN_SNAPSHOT=/tmp/snap \
+ZIGEN_SNAPSHOT_SCRIPT="open 常用字; type 学习五笔; mark rqyy; lookup 照键; page stats" \
 cargo run --features snapshot
 ```
