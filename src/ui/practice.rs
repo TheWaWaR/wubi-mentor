@@ -139,7 +139,7 @@ impl PracticeView {
         cx.notify();
     }
 
-    /// 切换方案：存下这次练习，按新方案重新读入统计和当前文本（要打的字可能不同）。
+    /// 切换方案：存下这次练习，按新方案重新读入统计、当前文本和进度（要打的字也可能不同）。
     pub fn scheme_changed(&mut self, cx: &mut Context<Self>) {
         self.end_session();
         self.stats = self
@@ -150,7 +150,8 @@ impl PracticeView {
             .into_iter()
             .map(|s| (s.ch, s))
             .collect();
-        match self.text_id() {
+        // 每个方案有自己的当前文本和进度。
+        match self.store.db.current_text_id().ok().flatten().or(self.text_id()) {
             Some(id) => self.load_text(id, cx),
             None => cx.notify(),
         }

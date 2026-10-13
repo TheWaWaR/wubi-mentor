@@ -20,9 +20,10 @@ pub struct Text {
     pub id: i64,
     pub title: String,
     pub content: String,
-    /// 下一个要打的字在 `content.chars()` 中的下标。
+    /// 当前方案下，下一个要打的字在 `content.chars()` 中的下标。
     pub position: usize,
     pub updated_at: i64,
+    /// 当前方案下最近一次练习的时间。
     pub last_practiced_at: Option<i64>,
 }
 
@@ -168,6 +169,7 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+-- position / last_practiced_at 是只有五笔时的旧列，进度已经搬到 text_progress。
 CREATE TABLE IF NOT EXISTS texts (
     id                INTEGER PRIMARY KEY,
     title             TEXT NOT NULL,
@@ -176,6 +178,13 @@ CREATE TABLE IF NOT EXISTS texts (
     created_at        INTEGER NOT NULL,
     updated_at        INTEGER NOT NULL,
     last_practiced_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS text_progress (
+    scheme            TEXT NOT NULL,
+    text_id           INTEGER NOT NULL REFERENCES texts(id) ON DELETE CASCADE,
+    position          INTEGER NOT NULL DEFAULT 0,
+    last_practiced_at INTEGER,
+    PRIMARY KEY (scheme, text_id)
 );
 CREATE TABLE IF NOT EXISTS char_stats (
     scheme    TEXT NOT NULL DEFAULT 'wubi86',
@@ -270,7 +279,21 @@ impl Db {
 
     fn init(conn: Connection) -> Result<Self> {
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
+        let had_progress: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'text_progress'",
+            [],
+            |r| r.get(0),
+        )?;
         conn.execute_batch(SCHEMA)?;
+        if !had_progress {
+            // 旧库里每篇文本的进度都是五笔的。
+            conn.execute(
+                "INSERT INTO text_progress (scheme, text_id, position, last_practiced_at)
+                 SELECT 'wubi86', id, position, last_practiced_at FROM texts
+                 WHERE position > 0 OR last_practiced_at IS NOT NULL",
+                [],
+            )?;
+        }
         let has_scheme: bool = conn.query_row(
             "SELECT COUNT(*) > 0 FROM pragma_table_info('sessions') WHERE name = 'scheme'",
             [],
@@ -390,12 +413,14 @@ impl Db {
 
     // ---- texts ----
 
+    /// 文本和当前方案下的进度，最近练过的在前。
     pub fn texts(&self) -> Result<Vec<Text>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, title, content, position, updated_at, last_practiced_at FROM texts
-             ORDER BY COALESCE(last_practiced_at, updated_at) DESC, id DESC",
+            "SELECT t.id, t.title, t.content, COALESCE(p.position, 0), t.updated_at, p.last_practiced_at
+             FROM texts t LEFT JOIN text_progress p ON p.text_id = t.id AND p.scheme = ?1
+             ORDER BY COALESCE(p.last_practiced_at, t.updated_at) DESC, t.id DESC",
         )?;
-        let rows = stmt.query_map([], row_to_text)?;
+        let rows = stmt.query_map([self.scheme().as_str()], row_to_text)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -403,9 +428,10 @@ impl Db {
         Ok(self
             .conn
             .query_row(
-                "SELECT id, title, content, position, updated_at, last_practiced_at
-                 FROM texts WHERE id = ?1",
-                [id],
+                "SELECT t.id, t.title, t.content, COALESCE(p.position, 0), t.updated_at, p.last_practiced_at
+                 FROM texts t LEFT JOIN text_progress p ON p.text_id = t.id AND p.scheme = ?2
+                 WHERE t.id = ?1",
+                params![id, self.scheme().as_str()],
                 row_to_text,
             )
             .optional()?)
@@ -421,22 +447,30 @@ impl Db {
         Ok(self.conn.last_insert_rowid())
     }
 
-    /// 修改内容时，若原进度之前的内容没变则保留进度，否则从头开始。
+    /// 修改内容时，每个方案的进度之前的内容没变就保留进度，否则从头开始。
     pub fn update_text(&self, id: i64, title: &str, content: &str) -> Result<()> {
         let Some(old) = self.text(id)? else {
             return Ok(());
         };
-        let kept: String = old.content.chars().take(old.position).collect();
-        let position = if content.starts_with(&kept) {
-            old.position
-        } else {
-            0
-        };
-        self.conn.execute(
-            "UPDATE texts SET title = ?2, content = ?3, position = ?4, updated_at = ?5
-             WHERE id = ?1",
-            params![id, title, content, position as i64, now_ms()],
+        let tx = self.conn.unchecked_transaction()?;
+        let progress: Vec<(String, i64)> = tx
+            .prepare("SELECT scheme, position FROM text_progress WHERE text_id = ?1")?
+            .query_map([id], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        for (scheme, position) in progress {
+            let kept: String = old.content.chars().take(position.max(0) as usize).collect();
+            if !content.starts_with(&kept) {
+                tx.execute(
+                    "UPDATE text_progress SET position = 0 WHERE scheme = ?1 AND text_id = ?2",
+                    params![scheme, id],
+                )?;
+            }
+        }
+        tx.execute(
+            "UPDATE texts SET title = ?2, content = ?3, updated_at = ?4 WHERE id = ?1",
+            params![id, title, content, now_ms()],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -445,22 +479,40 @@ impl Db {
         Ok(())
     }
 
+    /// 记下当前方案在这篇文本上的进度。
     pub fn set_position(&self, id: i64, position: usize) -> Result<()> {
         self.conn.execute(
-            "UPDATE texts SET position = ?2, last_practiced_at = ?3 WHERE id = ?1",
-            params![id, position as i64, now_ms()],
+            "INSERT INTO text_progress (scheme, text_id, position, last_practiced_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(scheme, text_id) DO UPDATE SET
+                position = excluded.position,
+                last_practiced_at = excluded.last_practiced_at",
+            params![self.scheme().as_str(), id, position as i64, now_ms()],
         )?;
         Ok(())
     }
 
     // ---- settings ----
 
+    /// 每个方案记住自己在练的文本；五笔沿用旧的 `current_text`。
+    fn current_text_key(&self) -> String {
+        match self.scheme() {
+            Scheme::Wubi86 => "current_text".into(),
+            other => format!("current_text.{}", other.as_str()),
+        }
+    }
+
+    /// 当前方案在练的文本；这个方案还没练过时沿用五笔的那篇。
     pub fn current_text_id(&self) -> Result<Option<i64>> {
-        Ok(self.meta("current_text")?.and_then(|v| v.parse().ok()))
+        let value = match self.meta(&self.current_text_key())? {
+            Some(v) => Some(v),
+            None => self.meta("current_text")?,
+        };
+        Ok(value.and_then(|v| v.parse().ok()))
     }
 
     pub fn set_current_text_id(&self, id: i64) -> Result<()> {
-        self.set_meta("current_text", &id.to_string())
+        self.set_meta(&self.current_text_key(), &id.to_string())
     }
 
     pub fn scheme(&self) -> Scheme {
@@ -714,6 +766,52 @@ mod tests {
         db.set_scheme(Scheme::Wubi86).unwrap();
         assert_eq!(db.char_stat('我').unwrap().errors, 0);
         assert_eq!(db.sessions(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn progress_is_per_scheme() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db.insert_text("t", "我们学习五笔").unwrap();
+        let other = db.insert_text("u", "仓颉").unwrap();
+        db.set_position(id, 3).unwrap();
+        db.set_current_text_id(id).unwrap();
+        db.set_scheme(Scheme::Cangjie5).unwrap();
+        let t = db.text(id).unwrap().unwrap();
+        assert_eq!((t.position, t.last_practiced_at), (0, None));
+        // 还没在仓颉下选过文本时沿用五笔的那篇。
+        assert_eq!(db.current_text_id().unwrap(), Some(id));
+        db.set_current_text_id(other).unwrap();
+        db.set_position(id, 1).unwrap();
+        // 改掉仓颉进度之前的内容：仓颉从头开始，五笔的进度之前没变，保留。
+        db.update_text(id, "t", "你们学习五笔").unwrap();
+        assert_eq!(db.text(id).unwrap().unwrap().position, 0);
+        db.set_scheme(Scheme::Wubi86).unwrap();
+        assert_eq!(db.current_text_id().unwrap(), Some(id));
+        assert_eq!(db.text(id).unwrap().unwrap().position, 0);
+        db.delete_text(id).unwrap();
+        let left: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM text_progress", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn migrates_text_positions_to_wubi() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE texts (id INTEGER PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL, last_practiced_at INTEGER);
+             INSERT INTO texts (id, title, content, position, created_at, updated_at, last_practiced_at)
+                VALUES (7, 't', '我们学习', 2, 0, 0, 5);",
+        )
+        .unwrap();
+        let db = Db::init(conn).unwrap();
+        let t = db.text(7).unwrap().unwrap();
+        assert_eq!((t.position, t.last_practiced_at), (2, Some(5)));
+        db.set_scheme(Scheme::Cangjie5).unwrap();
+        assert_eq!(db.text(7).unwrap().unwrap().position, 0);
     }
 
     #[test]
