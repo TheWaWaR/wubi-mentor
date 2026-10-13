@@ -5,7 +5,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::db::{CharStat, Mastery};
-use crate::dict::{CharKind, CodePart, Entry, display_glyph, is_single_stroke};
+use crate::dict::{CharKind, CodePart, Entry, ROOT_FONT, Root, display_glyph, is_single_stroke};
 use crate::ui::keyboard::{zone_color, zone_of};
 
 #[derive(IntoElement)]
@@ -75,11 +75,21 @@ pub fn big_char(ch: char, size: f32, cx: &App) -> impl IntoElement {
         )
 }
 
-/// 字根标签：字形 + 键位。伪字根（如“牛前”）用小字描述。
-pub fn root_chip(glyph: &str, key: char, coded: bool, cx: &App) -> impl IntoElement {
+/// 字根字体里的一个字形。
+pub fn root_glyph(glyph: char, size: f32) -> Div {
+    div()
+        .font_family(ROOT_FONT)
+        .text_size(px(size))
+        .line_height(px(size * 1.2))
+        .child(glyph.to_string())
+}
+
+/// 字根标签：字形 + 键位。优先用字根字体；没有时用 Unicode 字形，伪字根（如“牛前”）用小字描述。
+pub fn root_chip(root: &Root, coded: bool, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
+    let key = root.key;
     let tint = key_tint(key, cx);
-    let glyph = display_glyph(glyph);
+    let glyph = display_glyph(&root.glyph);
     let descriptive = glyph.chars().count() > 1;
     v_flex()
         .items_center()
@@ -101,14 +111,11 @@ pub fn root_chip(glyph: &str, key: char, coded: bool, cx: &App) -> impl IntoElem
                 .flex()
                 .items_center()
                 .text_color(theme.foreground)
-                .map(|this| {
-                    if descriptive {
-                        this.text_sm()
-                    } else {
-                        this.text_size(px(24.))
-                    }
-                })
-                .child(glyph.to_string()),
+                .map(|this| match root.font_glyph {
+                    Some(g) => this.child(root_glyph(g, 26.)),
+                    None if descriptive => this.text_sm().child(glyph.to_string()),
+                    None => this.text_size(px(24.)).child(glyph.to_string()),
+                }),
         )
         .child(
             div()
@@ -195,12 +202,26 @@ impl RenderOnce for DecompCard {
                             .text_color(if is_extra { tint } else { gpui_kit::white() })
                             .child(key.to_string()),
                     )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(part_caption(part, entry)),
-                    )
+                    .map(|this| match (entry.code_glyphs.get(i), part) {
+                        // 字根字体里有这一码的字形：字根直接画出来，识别码、笔画再加一行说明。
+                        (Some(&g), CodePart::Root { .. }) => {
+                            this.child(root_glyph(g, 18.).text_color(theme.muted_foreground))
+                        }
+                        (Some(&g), _) => this
+                            .child(root_glyph(g, 18.).text_color(theme.muted_foreground))
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .text_color(theme.muted_foreground)
+                                    .child(part_caption(part, entry)),
+                            ),
+                        (None, _) => this.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(part_caption(part, entry)),
+                        ),
+                    })
             }));
 
         let roots_row = h_flex()
@@ -208,8 +229,7 @@ impl RenderOnce for DecompCard {
             .gap_1()
             .children(entry.roots.iter().enumerate().map(|(i, root)| {
                 root_chip(
-                    &root.glyph,
-                    root.key,
+                    root,
                     coded.contains(&i) || entry.kind != CharKind::Compound,
                     cx,
                 )

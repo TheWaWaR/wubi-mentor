@@ -40,7 +40,21 @@ cargo run --release
 - 编码用 [iHTCboy/iWuBi](https://github.com/iHTCboy/iWuBi) 的 86 版码表交叉校验，并补上简码。
 
 9500 多个字里约 99.3% 的拆分和编码能互相印证；对不上的字在拆字卡上会标注“仅供参考”。
-常用字 3500 字全部收录。少数罕用字根系统字体里没有字形，显示为形近字或文字描述（如“勿内”“象底”）。
+常用字 3500 字全部收录。
+
+字根用「黑体字根」字体显示（`assets/fonts/wubi-roots.ttf`），它把 86 版字根和各种变形部件放在
+Unicode 私用区。字体和逐码字形数据（`wb_spelling.dict.yaml`）来自
+[myshiqiqi/rime-wubi](https://github.com/myshiqiqi/rime-wubi)；原字体没有有效的 PostScript 名、
+也没有字母 m（GPUI 会因此跳过它），`scripts/patch_root_font.py` 修正了这两点。
+参与编码的字根直接用逐码字形，中间不取码的字根按全库统计映射到最常对应的字形。
+上述来源都没有声明许可证，自用没问题，公开发布前请留意。
+
+重新生成数据：
+
+```bash
+python3 scripts/build_dict.py <下载目录> data/wubi86.tsv "$(cat scripts/traditional_roots.txt)"
+python3 scripts/patch_root_font.py <黑体字根.ttf> assets/fonts/wubi-roots.ttf
+```
 
 ## 开发
 

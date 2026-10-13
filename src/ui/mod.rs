@@ -25,6 +25,12 @@ use stats::{StatsEvent, StatsView};
 actions!(wubi_mentor, [Quit]);
 
 pub fn init(cx: &mut App) {
+    // 字根字体：字根和变形部件在私用区里。
+    if let Err(err) = cx.text_system().add_fonts(vec![std::borrow::Cow::Borrowed(
+        crate::dict::ROOT_FONT_DATA,
+    )]) {
+        eprintln!("无法加载字根字体: {err:#}");
+    }
     practice::init(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);

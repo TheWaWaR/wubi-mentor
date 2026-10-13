@@ -164,14 +164,6 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS chars (
-    ch          TEXT PRIMARY KEY,
-    full_code   TEXT NOT NULL,
-    short_codes TEXT NOT NULL,
-    kind        TEXT NOT NULL,
-    roots       TEXT NOT NULL,
-    ident       TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS texts (
     id                INTEGER PRIMARY KEY,
     title             TEXT NOT NULL,
@@ -198,6 +190,20 @@ CREATE TABLE IF NOT EXISTS sessions (
     active_ms  INTEGER NOT NULL,
     chars      INTEGER NOT NULL,
     missed     INTEGER NOT NULL
+);
+";
+
+/// 字典表跟着字典版本整表重建，所以单独建。
+const CHARS_SCHEMA: &str = "
+DROP TABLE IF EXISTS chars;
+CREATE TABLE chars (
+    ch          TEXT PRIMARY KEY,
+    full_code   TEXT NOT NULL,
+    short_codes TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    roots       TEXT NOT NULL,
+    ident       TEXT NOT NULL,
+    glyphs      TEXT NOT NULL
 );
 ";
 
@@ -276,11 +282,11 @@ impl Db {
             return Ok(());
         }
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute("DELETE FROM chars", [])?;
+        tx.execute_batch(CHARS_SCHEMA)?;
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO chars (ch, full_code, short_codes, kind, roots, ident)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO chars (ch, full_code, short_codes, kind, roots, ident, glyphs)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
             for e in Dictionary::parse_tsv(DICT_TSV) {
                 stmt.execute(params![
@@ -290,6 +296,7 @@ impl Db {
                     e.kind.as_str(),
                     e.roots_column(),
                     e.ident.map(String::from).unwrap_or_default(),
+                    e.code_glyphs.iter().collect::<String>(),
                 ])?;
             }
         }
@@ -315,15 +322,16 @@ impl Db {
     pub fn load_dictionary(&self) -> Result<Dictionary> {
         let mut stmt = self
             .conn
-            .prepare("SELECT ch, full_code, short_codes, kind, roots, ident FROM chars")?;
+            .prepare("SELECT ch, full_code, short_codes, kind, roots, ident, glyphs FROM chars")?;
         let rows = stmt.query_map([], |r| {
-            let cols: [String; 6] = [
+            let cols: [String; 7] = [
                 r.get(0)?,
                 r.get(1)?,
                 r.get(2)?,
                 r.get(3)?,
                 r.get(4)?,
                 r.get(5)?,
+                r.get(6)?,
             ];
             Ok(cols.join("\t"))
         })?;

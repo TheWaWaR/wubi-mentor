@@ -1,11 +1,12 @@
 //! 86 版五笔拆字数据：字根、全码、简码与识别码。
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// Built by `scripts/build_dict.py`; seeded into SQLite on first run.
 pub const DICT_TSV: &str = include_str!("../data/wubi86.tsv");
 /// Bump when `data/wubi86.tsv` changes so existing databases reseed.
-pub const DICT_VERSION: &str = "1";
+pub const DICT_VERSION: &str = "2";
 
 /// 键位 → 键名字根，按 QWERTY 键盘顺序可用 [`KEY_ROWS`] 访问。
 pub const KEY_NAMES: [(char, char); 25] = [
@@ -38,57 +39,47 @@ pub const KEY_NAMES: [(char, char); 25] = [
 
 pub const KEY_ROWS: [&str; 3] = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
 
-/// 每个键上的全部字根（86 版，不含繁体），按字根表的顺序，最常用的在前。
-/// 没有 Unicode 字形的变形写法用文字描述（如“羊底”“母框”）。
-pub fn key_roots(key: char) -> &'static [&'static str] {
-    match key {
-        'G' => &["王", "一", "五", "戋", "龶"],
-        'F' => &["土", "士", "二", "干", "十", "寸", "雨", "革底"],
-        'D' => &[
-            "大", "犬", "三", "古", "石", "厂", "ナ", "丆", "镸", "羊底", "長头",
-        ],
-        'S' => &["木", "丁", "西", "覀", "朩"],
-        'A' => &[
-            "工", "戈", "弋", "七", "匚", "匸", "艹", "廾", "廿", "卄", "龷",
-        ],
-        'H' => &["目", "止", "卜", "⺊", "上", "丨", "龰", "且", "虍", "具头"],
-        'J' => &["日", "曰", "早", "虫", "刂", "〢", "竖川"],
-        'K' => &["口", "川"],
-        'L' => &["田", "甲", "囗", "四", "罒", "皿", "车", "力", "四竖"],
-        'M' => &["山", "由", "贝", "冂", "几", "𠘨", "骨头"],
-        'T' => &["禾", "竹", "⺮", "丿", "𠂉", "彳", "夂", "攵", "牛底"],
-        'R' => &["白", "手", "扌", "斤", "𠂆", "牛前", "气头"],
-        'E' => &[
-            "月", "彡", "乃", "用", "冃", "豕", "衣底", "爫", "舟底", "豸头", "家底",
-        ],
-        'W' => &["人", "亻", "八", "𠆢", "癶", "祭头"],
-        'Q' => &[
-            "金",
-            "钅",
-            "勹",
-            "儿",
-            "夕",
-            "犭",
-            "乂",
-            "⺈",
-            "鱼头",
-            "氏无七",
-        ],
-        'Y' => &["言", "讠", "文", "方", "广", "丶", "亠", "主头"],
-        'U' => &["立", "辛", "六", "门", "疒", "丬", "冫", "丷", "䒑", "立头"],
-        'I' => &["水", "氵", "氺", "小", "⺌", "⺍", "兴头", "水侧"],
-        'O' => &["火", "灬", "米", "业头", "小倒"],
-        'P' => &["之", "辶", "廴", "宀", "冖", "礻", "衤"],
-        'N' => &[
-            "已", "己", "巳", "乙", "尸", "心", "忄", "⺗", "羽", "コ", "乚", "乛",
-        ],
-        'B' => &["子", "孑", "了", "耳", "也", "卩", "阝", "凵", "巜"],
-        'V' => &["女", "刀", "九", "臼", "彐", "巛"],
-        'C' => &["又", "巴", "马", "厶", "ス", "龴"],
-        'X' => &["纟", "糹", "幺", "弓", "匕", "母框"],
-        _ => &[],
-    }
+struct KeyRoots {
+    all: Vec<char>,
+    frequent: Vec<char>,
 }
+
+fn key_roots_table() -> &'static HashMap<char, KeyRoots> {
+    static TABLE: OnceLock<HashMap<char, KeyRoots>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        include_str!("../data/key_roots.tsv")
+            .lines()
+            .filter_map(|line| {
+                let mut cols = line.split('\t');
+                let key = cols.next()?.chars().next()?;
+                let all = cols.next()?.chars().collect();
+                let frequent = cols.next().unwrap_or_default().chars().collect();
+                Some((key, KeyRoots { all, frequent }))
+            })
+            .collect()
+    })
+}
+
+/// 每个键上的全部字根在字根字体里的字形（86 版，不含繁体），按字根表顺序，第一个是键名字根。
+/// 由 `scripts/build_dict.py` 生成。
+pub fn key_roots(key: char) -> &'static [char] {
+    key_roots_table()
+        .get(&key)
+        .map(|r| r.all.as_slice())
+        .unwrap_or_default()
+}
+
+/// 每个键上最常用的字根（不含键名字根），按字根表顺序。
+pub fn key_roots_frequent(key: char) -> &'static [char] {
+    key_roots_table()
+        .get(&key)
+        .map(|r| r.frequent.as_slice())
+        .unwrap_or_default()
+}
+
+/// 字根字体（「黑体字根」）的族名；它把字根和变形部件放在私用区。
+pub const ROOT_FONT: &str = "Wubi Roots";
+pub const ROOT_FONT_DATA: &[u8] = include_bytes!("../assets/fonts/wubi-roots.ttf");
 
 /// 系统字体缺字形的字根，换成形近的字或文字描述来显示。
 pub fn display_glyph(glyph: &str) -> &str {
@@ -164,6 +155,8 @@ pub struct Root {
     /// 字根的字形；伪字根（如“牛前”）是描述文字。
     pub glyph: String,
     pub key: char,
+    /// 字根字体里对应的字形（私用区字符），能更准确地显示变形部件。
+    pub font_glyph: Option<char>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -177,6 +170,8 @@ pub struct Entry {
     pub ident: Option<char>,
     /// 拆分与编码是否互相印证；否则拆分只供参考。
     pub verified: bool,
+    /// 每一码在字根字体里的字形：字根、识别码或笔画；可能为空。
+    pub code_glyphs: Vec<char>,
 }
 
 /// 编码中每一码的来源，用于逐码讲解。
@@ -225,6 +220,7 @@ impl Entry {
         let kind = CharKind::parse(cols.next()?);
         let (roots, verified) = parse_roots(cols.next()?);
         let ident = cols.next().and_then(|s| s.chars().next());
+        let code_glyphs = cols.next().map(|s| s.chars().collect()).unwrap_or_default();
         Some(Self {
             ch,
             full_code,
@@ -233,6 +229,7 @@ impl Entry {
             roots,
             ident,
             verified,
+            code_glyphs,
         })
     }
 
@@ -240,7 +237,10 @@ impl Entry {
         let body = self
             .roots
             .iter()
-            .map(|r| format!("{}:{}", r.glyph, r.key))
+            .map(|r| match r.font_glyph {
+                Some(g) => format!("{}:{}:{g}", r.glyph, r.key),
+                None => format!("{}:{}", r.glyph, r.key),
+            })
             .collect::<Vec<_>>()
             .join(" ");
         if self.verified {
@@ -342,10 +342,14 @@ fn parse_roots(col: &str) -> (Vec<Root>, bool) {
     let roots = body
         .split(' ')
         .filter_map(|tok| {
-            let (glyph, key) = tok.rsplit_once(':')?;
+            let mut fields = tok.splitn(3, ':');
+            let glyph = fields.next()?;
+            let key = fields.next()?.chars().next()?;
+            let font_glyph = fields.next().and_then(|g| g.chars().next());
             Some(Root {
                 glyph: glyph.to_string(),
-                key: key.chars().next()?,
+                key,
+                font_glyph,
             })
         })
         .collect();
@@ -451,6 +455,17 @@ mod tests {
     }
 
     #[test]
+    fn root_font_glyphs() {
+        let d = dict();
+        let e = d.get('的').unwrap();
+        assert_eq!(e.code_glyphs.len(), 4);
+        assert!(e.roots.iter().all(|r| r.font_glyph.is_some()));
+        for key in "QWERTYUIOPASDFGHJKLXCVBNM".chars() {
+            assert!(key_roots(key).len() >= 3, "{key}");
+        }
+    }
+
+    #[test]
     fn key_name_and_radical() {
         let d = dict();
         assert_eq!(d.get('王').unwrap().kind, CharKind::KeyName);
@@ -477,13 +492,14 @@ mod tests {
         let d = dict();
         let e = d.get('照').unwrap();
         let line = format!(
-            "{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
             e.ch,
             e.full_code,
             e.short_codes.join(","),
             e.kind.as_str(),
             e.roots_column(),
-            e.ident.map(String::from).unwrap_or_default()
+            e.ident.map(String::from).unwrap_or_default(),
+            e.code_glyphs.iter().collect::<String>()
         );
         assert_eq!(Entry::parse_line(&line).as_ref(), Some(e));
     }

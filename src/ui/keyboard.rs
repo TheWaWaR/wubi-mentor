@@ -4,7 +4,7 @@ use gpui_kit::component::{ActiveTheme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::dict::{KEY_ROWS, key_name, key_roots};
+use crate::dict::{KEY_ROWS, ROOT_FONT, key_name, key_roots, key_roots_frequent};
 
 /// 五笔的五个区：横、竖、撇、捺、折。
 pub fn zone_of(key: char) -> Option<usize> {
@@ -125,24 +125,34 @@ impl RenderOnce for Keyboard {
                     div()
                         .flex()
                         .flex_wrap()
-                        .gap_x(px(if self.large { 6. } else { 4. }))
+                        .gap_x(px(if self.large { 4. } else { 2. }))
                         .pt(px(if self.large { 4. } else { 2. }))
-                        .children(key_roots(key).iter().skip(1).map(|root| {
-                            // 文字描述的伪字根用小字，和真字形区分开。
-                            let descriptive = root.chars().count() > 1;
-                            let size = match (self.large, descriptive) {
-                                (true, false) => 16.,
-                                (true, true) => 12.,
-                                (false, false) => 12.,
-                                (false, true) => 10.,
-                            };
-                            div()
-                                .whitespace_nowrap()
-                                .text_size(px(size))
-                                .line_height(px(if self.large { 22. } else { 15. }))
-                                .text_color(if descriptive || !self.large { sub } else { fg })
-                                .child(*root)
-                        })),
+                        .font_family(ROOT_FONT)
+                        .text_size(px(if self.large { 18. } else { 13. }))
+                        .line_height(px(if self.large { 22. } else { 15. }))
+                        .text_color(if self.large { fg } else { sub })
+                        .map(|this| {
+                            if self.large {
+                                this.children(
+                                    key_roots(key)
+                                        .iter()
+                                        .skip(1)
+                                        .map(|g| div().child(g.to_string())),
+                                )
+                            } else {
+                                let shown = key_roots_frequent(key);
+                                let hidden = key_roots(key).len().saturating_sub(1 + shown.len());
+                                this.children(shown.iter().map(|g| div().child(g.to_string())))
+                                    .when(hidden > 0, |this| {
+                                        this.child(
+                                            div()
+                                                .font_family(theme.font_family.clone())
+                                                .text_size(px(10.))
+                                                .child(format!("+{hidden}")),
+                                        )
+                                    })
+                            }
+                        }),
                 )
                 .when(key == 'Z', |this| {
                     this.child(div().text_size(px(10.)).text_color(sub).child("学习键"))
