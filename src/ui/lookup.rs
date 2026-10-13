@@ -83,7 +83,10 @@ impl Render for LookupView {
             let body = match self.store.dict.get(c) {
                 Some(entry) => {
                     let stat = self.store.db.char_stat(c).unwrap_or_default();
-                    DecompCard::new(entry.clone()).stat(stat).into_any_element()
+                    // 没练过的字不显示统计行，省点空间。
+                    DecompCard::new(entry.clone())
+                        .when(stat.seen > 0, |card| card.stat(stat))
+                        .into_any_element()
                 }
                 None => div()
                     .text_color(theme.muted_foreground)
