@@ -73,7 +73,7 @@ python3 scripts/build_cangjie.py <下载目录> data/cangjie5.tsv
 
 ```bash
 cargo test
-# 按脚本操作界面并把每一步渲染成 PNG（不需要屏幕录制权限）
+# 按脚本操作界面并把每一步渲染成 PNG（不需要屏幕录制权限；还支持 move/click x y 模拟鼠标）
 ZIGEN_DB=/tmp/snap.db ZIGEN_SNAPSHOT=/tmp/snap \
 ZIGEN_SNAPSHOT_SCRIPT="open 常用字; type 学习五笔; mark rqyy; lookup 照键; scheme cangjie5; lookup 我们; page stats" \
 cargo run --features snapshot

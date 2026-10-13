@@ -85,6 +85,37 @@ pub fn run(window: AnyWindowHandle, main: Entity<MainView>, dir: std::path::Path
                     })
                     .await
                 }
+                "click" => {
+                    let mut xy = arg.split_whitespace().filter_map(|v| v.parse::<f32>().ok());
+                    let position = point(px(xy.next().unwrap_or(0.)), px(xy.next().unwrap_or(0.)));
+                    // 直接派发给窗口：点击的回调可能要更新 MainView，不能套在 `main.update` 里。
+                    cx.update(|cx| {
+                        window
+                            .update(cx, |_, w, cx| {
+                                w.dispatch_event(
+                                    PlatformInput::MouseDown(MouseDownEvent {
+                                        button: MouseButton::Left,
+                                        position,
+                                        modifiers: Modifiers::default(),
+                                        click_count: 1,
+                                        first_mouse: false,
+                                    }),
+                                    cx,
+                                );
+                                w.dispatch_event(
+                                    PlatformInput::MouseUp(MouseUpEvent {
+                                        button: MouseButton::Left,
+                                        position,
+                                        modifiers: Modifiers::default(),
+                                        click_count: 1,
+                                    }),
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    });
+                    step(cx, &name, &|_, _, _| {}).await
+                }
                 "shot" => step(cx, &name, &|_, _, _| {}).await,
                 other => eprintln!("unknown snapshot command: {other}"),
             }

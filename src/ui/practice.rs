@@ -151,7 +151,14 @@ impl PracticeView {
             .map(|s| (s.ch, s))
             .collect();
         // 每个方案有自己的当前文本和进度。
-        match self.store.db.current_text_id().ok().flatten().or(self.text_id()) {
+        match self
+            .store
+            .db
+            .current_text_id()
+            .ok()
+            .flatten()
+            .or(self.text_id())
+        {
             Some(id) => self.load_text(id, cx),
             None => cx.notify(),
         }

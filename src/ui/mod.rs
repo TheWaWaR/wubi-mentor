@@ -11,7 +11,8 @@ mod stats;
 use std::rc::Rc;
 
 use gpui_kit::component::{
-    ActiveTheme, IconName, h_flex,
+    ActiveTheme, Icon, IconName, h_flex,
+    menu::{DropdownMenu as _, PopupMenuItem},
     sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
     v_flex,
 };
@@ -215,57 +216,59 @@ impl Render for MainView {
                 .active(self.page == page)
                 .on_click(cx.listener(move |this, _, window, cx| this.go(page, window, cx)))
         };
-        let sidebar = Sidebar::new("nav")
-            .w(px(188.))
-            .header(
-                SidebarHeader::new().child(
-                    h_flex()
-                        .gap_2()
-                        .items_center()
-                        .child(
-                            div()
-                                .size(px(30.))
-                                .rounded(px(8.))
-                                .bg(theme.primary)
-                                .text_color(theme.primary_foreground)
-                                .flex()
+        let weak = cx.entity().downgrade();
+        // 头部是方案切换器：点开下拉菜单选五笔或仓颉，和下面的功能列表分开。
+        let header = SidebarHeader::new()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(scheme_icon(scheme, 30., cx))
+                    .child(
+                        v_flex()
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child("字根学堂"))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(scheme.label()),
+                            ),
+                    ),
+            )
+            .child(
+                Icon::new(IconName::ChevronsUpDown)
+                    .size_4()
+                    .text_color(theme.muted_foreground),
+            )
+            .dropdown_menu(move |menu, _, _| {
+                let mut menu = menu.min_w(px(200.)).label("输入方案");
+                for s in Scheme::ALL {
+                    let weak = weak.clone();
+                    menu = menu.item(
+                        PopupMenuItem::element(move |_, cx| {
+                            h_flex()
+                                .gap_2()
                                 .items_center()
-                                .justify_center()
-                                .font_weight(FontWeight::BOLD)
-                                .child(scheme.logo()),
-                        )
-                        .child(
-                            v_flex()
-                                .child(div().font_weight(FontWeight::SEMIBOLD).child("字根学堂"))
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(theme.muted_foreground)
-                                        .child(scheme.label()),
-                                ),
-                        ),
-                ),
-            )
-            .child(
-                SidebarGroup::new("学习").child(
-                    SidebarMenu::new()
-                        .child(item("练习", IconName::SquareTerminal, Page::Practice, cx))
-                        .child(item("文本库", IconName::BookOpen, Page::Library, cx))
-                        .child(item("查字", IconName::Search, Page::Lookup, cx))
-                        .child(item("统计", IconName::ChartPie, Page::Stats, cx)),
-                ),
-            )
-            .child(
-                SidebarGroup::new("输入方案").child(SidebarMenu::new().children(Scheme::ALL.map(
-                    |s| {
-                        SidebarMenuItem::new(s.label())
-                            .active(s == scheme)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.set_scheme(s, window, cx)
-                            }))
-                    },
-                ))),
-            );
+                                .child(scheme_icon(s, 22., cx))
+                                .child(s.label())
+                        })
+                        .checked(s == scheme)
+                        .on_click(move |_, window, cx| {
+                            let _ = weak.update(cx, |this, cx| this.set_scheme(s, window, cx));
+                        }),
+                    );
+                }
+                menu
+            });
+        let sidebar = Sidebar::new("nav").w(px(188.)).header(header).child(
+            SidebarGroup::new("学习").child(
+                SidebarMenu::new()
+                    .child(item("练习", IconName::SquareTerminal, Page::Practice, cx))
+                    .child(item("文本库", IconName::BookOpen, Page::Library, cx))
+                    .child(item("查字", IconName::Search, Page::Lookup, cx))
+                    .child(item("统计", IconName::ChartPie, Page::Stats, cx)),
+            ),
+        );
 
         let content = match self.page {
             Page::Practice => self.practice.clone().into_any_element(),
@@ -281,4 +284,29 @@ impl Render for MainView {
             .child(sidebar)
             .child(div().flex_1().min_w_0().h_full().child(content))
     }
+}
+
+/// 方案图标：圆角方块里一个字（五／倉），各用一种颜色。
+fn scheme_icon(scheme: Scheme, size: f32, cx: &App) -> impl IntoElement {
+    let theme = cx.theme();
+    let bg = match scheme {
+        Scheme::Wubi86 => theme.primary,
+        Scheme::Cangjie5 => theme.blue,
+    };
+    let fg = match scheme {
+        Scheme::Wubi86 => theme.primary_foreground,
+        Scheme::Cangjie5 => gpui_kit::white(),
+    };
+    div()
+        .flex_none()
+        .size(px(size))
+        .rounded(px(size * 0.27))
+        .bg(bg)
+        .text_color(fg)
+        .text_size(px(size * 0.55))
+        .flex()
+        .items_center()
+        .justify_center()
+        .font_weight(FontWeight::BOLD)
+        .child(scheme.logo())
 }
