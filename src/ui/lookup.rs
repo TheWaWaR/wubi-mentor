@@ -157,10 +157,10 @@ fn root_chart(cx: &App) -> impl IntoElement {
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("每个键左上角是字母，右上角是键名字根，下面是这个键上的常用字根。"),
+                        .child("每个键左上角是字母，右上角是键名字根，下面是这个键上的全部字根（不含繁体）；小字是没有独立字形的变形部件。"),
                 ),
         )
-        .child(Keyboard::new().show_roots(true))
+        .child(Keyboard::new().large(true))
         .child(
             h_flex().gap_4().children(ZONE_NAMES.iter().enumerate().map(|(i, name)| {
                 h_flex()
