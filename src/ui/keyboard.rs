@@ -25,19 +25,14 @@ pub fn zone_color(zone: usize, cx: &App) -> Hsla {
 pub struct Keyboard {
     /// 要高亮的键和它在编码中的序号（从 1 开始）。
     highlights: Vec<(char, usize)>,
-    show_roots: bool,
     /// 大键帽，显示该键的全部字根（字根表用）；否则只显示最常用的几个。
     large: bool,
 }
-
-/// 小键盘上每个键最多显示几个字根。
-const COMPACT_ROOTS: usize = 6;
 
 impl Keyboard {
     pub fn new() -> Self {
         Self {
             highlights: Vec::new(),
-            show_roots: true,
             large: false,
         }
     }
@@ -49,11 +44,6 @@ impl Keyboard {
 
     pub fn large(mut self, large: bool) -> Self {
         self.large = large;
-        self
-    }
-
-    pub fn show_roots(mut self, show: bool) -> Self {
-        self.show_roots = show;
         self
     }
 }
@@ -94,12 +84,8 @@ impl RenderOnce for Keyboard {
             v_flex()
                 .id(SharedString::from(format!("key-{key}")))
                 .relative()
-                .w(px(if self.large { 92. } else { 68. }))
-                .h(px(match (self.large, self.show_roots) {
-                    (true, _) => 136.,
-                    (false, true) => 76.,
-                    (false, false) => 48.,
-                }))
+                .w(px(if self.large { 92. } else { 88. }))
+                .min_h(px(if self.large { 136. } else { 84. }))
                 .px_1p5()
                 .py_1()
                 .gap_0p5()
@@ -134,40 +120,30 @@ impl RenderOnce for Keyboard {
                             )
                         }),
                 )
-                .when(self.show_roots && !self.large, |this| {
+                .child(
                     // 第一个是键名字根，已经显示在右上角。
-                    let roots = key_roots(key).get(1..).unwrap_or_default();
-                    let mut text = roots[..roots.len().min(COMPACT_ROOTS)].join(" ");
-                    if roots.len() > COMPACT_ROOTS {
-                        text.push_str(" …");
-                    }
-                    this.child(
-                        div()
-                            .text_size(px(10.))
-                            .line_height(px(12.))
-                            .text_color(sub)
-                            .child(text),
-                    )
-                })
-                .when(self.large, |this| {
-                    this.child(div().flex().flex_wrap().gap_x_1p5().pt_1().children(
-                        key_roots(key).iter().skip(1).map(|root| {
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_x(px(if self.large { 6. } else { 4. }))
+                        .pt(px(if self.large { 4. } else { 2. }))
+                        .children(key_roots(key).iter().skip(1).map(|root| {
                             // 文字描述的伪字根用小字，和真字形区分开。
                             let descriptive = root.chars().count() > 1;
+                            let size = match (self.large, descriptive) {
+                                (true, false) => 16.,
+                                (true, true) => 12.,
+                                (false, false) => 12.,
+                                (false, true) => 10.,
+                            };
                             div()
-                                .text_color(if descriptive { sub } else { fg })
-                                .map(|d| {
-                                    if descriptive {
-                                        d.text_xs()
-                                    } else {
-                                        d.text_base()
-                                    }
-                                })
-                                .line_height(px(22.))
+                                .whitespace_nowrap()
+                                .text_size(px(size))
+                                .line_height(px(if self.large { 22. } else { 15. }))
+                                .text_color(if descriptive || !self.large { sub } else { fg })
                                 .child(*root)
-                        }),
-                    ))
-                })
+                        })),
+                )
                 .when(key == 'Z', |this| {
                     this.child(div().text_size(px(10.)).text_color(sub).child("学习键"))
                 })
@@ -193,6 +169,7 @@ impl RenderOnce for Keyboard {
             .items_center()
             .children(KEY_ROWS.iter().enumerate().map(|(row, keys)| {
                 h_flex()
+                    .items_stretch()
                     .gap_1p5()
                     .pl(px(row as f32 * if self.large { 30. } else { 22. }))
                     .children(keys.chars().map(key_cap))
