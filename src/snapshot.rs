@@ -69,6 +69,21 @@ pub fn run(window: AnyWindowHandle, main: Entity<MainView>, dir: std::path::Path
                     })
                     .await
                 }
+                "move" => {
+                    let mut xy = arg.split_whitespace().filter_map(|v| v.parse::<f32>().ok());
+                    let (x, y) = (xy.next().unwrap_or(0.), xy.next().unwrap_or(0.));
+                    step(cx, &name, &move |_, w, cx| {
+                        w.dispatch_event(
+                            PlatformInput::MouseMove(MouseMoveEvent {
+                                position: point(px(x), px(y)),
+                                pressed_button: None,
+                                modifiers: Modifiers::default(),
+                            }),
+                            cx,
+                        );
+                    })
+                    .await
+                }
                 "shot" => step(cx, &name, &|_, _, _| {}).await,
                 other => eprintln!("unknown snapshot command: {other}"),
             }

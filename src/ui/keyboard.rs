@@ -48,11 +48,34 @@ impl Keyboard {
     }
 }
 
+/// 鼠标停在哪个键（或它展开的浮层）上。
+#[derive(Default)]
+struct HoverState {
+    key: Option<char>,
+    overlay: Option<char>,
+}
+
+/// 展开浮层的宽度：比键帽宽，盖住相邻的键。
+const EXPANDED_WIDTH: f32 = 168.;
+
 impl RenderOnce for Keyboard {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme().clone();
         let any_highlight = !self.highlights.is_empty();
-        let key_cap = |key: char| {
+        let hover = window.use_keyed_state(
+            if self.large {
+                "keyboard-hover-large"
+            } else {
+                "keyboard-hover"
+            },
+            cx,
+            |_, _| HoverState::default(),
+        );
+        let expanded = {
+            let state = hover.read(cx);
+            state.overlay.or(state.key)
+        };
+        let key_cap = |row: usize, col: usize, key: char| {
             let orders: Vec<String> = self
                 .highlights
                 .iter()
@@ -81,9 +104,56 @@ impl RenderOnce for Keyboard {
             } else {
                 theme.muted_foreground
             };
+            let hidden = if self.large {
+                0
+            } else {
+                key_roots(key)
+                    .len()
+                    .saturating_sub(1 + key_roots_frequent(key).len())
+            };
+            let header = |name_size_large: bool, fg: Hsla, sub: Hsla| {
+                h_flex()
+                    .justify_between()
+                    .items_center()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(sub)
+                            .child(key.to_string()),
+                    )
+                    .when_some(key_name(key), |this, name| {
+                        this.child(
+                            div()
+                                .map(|d| {
+                                    if name_size_large {
+                                        d.text_xl()
+                                    } else {
+                                        d.text_base()
+                                    }
+                                })
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(fg)
+                                .child(name.to_string()),
+                        )
+                    })
+            };
             v_flex()
                 .id(SharedString::from(format!("key-{key}")))
                 .relative()
+                .when(hidden > 0, |this| {
+                    let hover = hover.clone();
+                    this.on_hover(move |hovered, _, cx| {
+                        hover.update(cx, |state, cx| {
+                            if *hovered {
+                                state.key = Some(key);
+                            } else if state.key == Some(key) {
+                                state.key = None;
+                            }
+                            cx.notify();
+                        })
+                    })
+                })
                 .w(px(if self.large { 92. } else { 88. }))
                 .min_h(px(if self.large { 136. } else { 84. }))
                 .px_1p5()
@@ -93,33 +163,7 @@ impl RenderOnce for Keyboard {
                 .border_1()
                 .border_color(border)
                 .bg(bg)
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .items_center()
-                        .child(
-                            div()
-                                .text_xs()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(sub)
-                                .child(key.to_string()),
-                        )
-                        .when_some(key_name(key), |this, name| {
-                            this.child(
-                                div()
-                                    .map(|d| {
-                                        if self.large {
-                                            d.text_xl()
-                                        } else {
-                                            d.text_base()
-                                        }
-                                    })
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(fg)
-                                    .child(name.to_string()),
-                            )
-                        }),
-                )
+                .child(header(self.large, fg, sub))
                 .child(
                     // 第一个是键名字根，已经显示在右上角。
                     div()
@@ -141,7 +185,6 @@ impl RenderOnce for Keyboard {
                                 )
                             } else {
                                 let shown = key_roots_frequent(key);
-                                let hidden = key_roots(key).len().saturating_sub(1 + shown.len());
                                 this.children(shown.iter().map(|g| div().child(g.to_string())))
                                     .when(hidden > 0, |this| {
                                         this.child(
@@ -156,6 +199,67 @@ impl RenderOnce for Keyboard {
                 )
                 .when(key == 'Z', |this| {
                     this.child(div().text_size(px(10.)).text_color(sub).child("学习键"))
+                })
+                // 折叠的键：鼠标停上去时原地展开，盖住相邻的键，显示全部字根。
+                .when(expanded == Some(key) && hidden > 0, |this| {
+                    let hover = hover.clone();
+                    let bottom_row = row == KEY_ROWS.len() - 1;
+                    let right_half = col * 2 >= KEY_ROWS[row].len();
+                    this.child(
+                        deferred(
+                            v_flex()
+                                .id(SharedString::from(format!("key-expanded-{key}")))
+                                .occlude()
+                                .absolute()
+                                .map(|d| {
+                                    if bottom_row {
+                                        d.bottom(px(-1.))
+                                    } else {
+                                        d.top(px(-1.))
+                                    }
+                                })
+                                .map(|d| {
+                                    if right_half {
+                                        d.right(px(-1.))
+                                    } else {
+                                        d.left(px(-1.))
+                                    }
+                                })
+                                .w(px(EXPANDED_WIDTH))
+                                .px_2()
+                                .py_1p5()
+                                .gap_1()
+                                .rounded(px(8.))
+                                .border_1()
+                                .border_color(tint)
+                                .bg(theme.background)
+                                .shadow_lg()
+                                .on_hover(move |hovered, _, cx| {
+                                    hover.update(cx, |state, cx| {
+                                        state.overlay = hovered.then_some(key);
+                                        cx.notify();
+                                    })
+                                })
+                                .child(header(false, theme.foreground, theme.muted_foreground))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_wrap()
+                                        .gap_x(px(4.))
+                                        .font_family(ROOT_FONT)
+                                        .text_size(px(16.))
+                                        .line_height(px(20.))
+                                        .text_color(theme.foreground)
+                                        .children(
+                                            key_roots(key)
+                                                .iter()
+                                                .skip(1)
+                                                .map(|g| div().child(g.to_string())),
+                                        ),
+                                ),
+                        )
+                        .with_priority(2),
+                    )
                 })
                 .when(lit, |this| {
                     this.child(
@@ -182,7 +286,11 @@ impl RenderOnce for Keyboard {
                     .items_stretch()
                     .gap_1p5()
                     .pl(px(row as f32 * if self.large { 30. } else { 22. }))
-                    .children(keys.chars().map(key_cap))
+                    .children(
+                        keys.chars()
+                            .enumerate()
+                            .map(|(col, key)| key_cap(row, col, key)),
+                    )
             }))
     }
 }
