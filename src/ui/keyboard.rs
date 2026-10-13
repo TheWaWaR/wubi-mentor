@@ -90,7 +90,7 @@ impl RenderOnce for Keyboard {
             let (bg, border) = if lit {
                 (tint.opacity(0.9), tint)
             } else if any_highlight {
-                (theme.background, theme.border)
+                (tint.opacity(0.05), tint.opacity(0.2))
             } else {
                 (tint.opacity(0.08), tint.opacity(0.35))
             };
