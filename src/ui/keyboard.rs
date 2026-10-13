@@ -289,18 +289,30 @@ impl RenderOnce for Keyboard {
                     )
                 })
                 .when(lit, |this| {
+                    // 延后绘制，免得被键帽边框盖住。
                     this.child(
-                        div()
-                            .absolute()
-                            .top(px(-8.))
-                            .right(px(-6.))
-                            .px_1()
-                            .rounded_full()
-                            .bg(theme.foreground)
-                            .text_color(theme.background)
-                            .text_size(px(10.))
-                            .font_weight(FontWeight::BOLD)
-                            .child(orders.join("·")),
+                        deferred(
+                            div()
+                                .absolute()
+                                .top(px(-9.))
+                                .right(px(-4.))
+                                .h(px(18.))
+                                .min_w(px(18.))
+                                .px(px(5.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded_full()
+                                .border_1()
+                                .border_color(theme.background)
+                                .bg(theme.foreground)
+                                .text_color(theme.background)
+                                .text_size(px(11.))
+                                .line_height(px(16.))
+                                .font_weight(FontWeight::BOLD)
+                                .child(orders.join("·")),
+                        )
+                        .with_priority(1),
                     )
                 })
         };

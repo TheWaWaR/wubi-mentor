@@ -213,11 +213,13 @@ fn root_chart(cx: &App) -> impl IntoElement {
 }
 
 fn zone_legend(cx: &App) -> impl IntoElement {
-    h_flex().gap_4().children(ZONE_NAMES.iter().enumerate().map(|(i, name)| {
-        h_flex()
-            .gap_1p5()
-            .items_center()
-            .child(div().size(px(12.)).rounded(px(3.)).bg(zone_color(i, cx)))
-            .child(div().text_sm().child(format!("{} {}", i + 1, name)))
-    }))
+    h_flex()
+        .gap_4()
+        .children(ZONE_NAMES.iter().enumerate().map(|(i, name)| {
+            h_flex()
+                .gap_1p5()
+                .items_center()
+                .child(div().size(px(12.)).rounded(px(3.)).bg(zone_color(i, cx)))
+                .child(div().text_sm().child(format!("{} {}", i + 1, name)))
+        }))
 }
