@@ -175,6 +175,11 @@ impl Entry {
             })
             .collect()
     }
+
+    /// 所有部件用到的键（包括占多码的部件，如「子」= ND）。
+    pub fn part_keys(&self) -> impl Iterator<Item = char> + '_ {
+        self.parts.iter().flat_map(|p| p.code.chars())
+    }
 }
 
 #[derive(Default)]

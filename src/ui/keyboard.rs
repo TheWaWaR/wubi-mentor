@@ -61,6 +61,12 @@ impl Keyboard {
         self
     }
 
+    /// 只激活键，不标字形（如仓颉占多码的部件）。
+    pub fn active_keys(mut self, keys: impl IntoIterator<Item = char>) -> Self {
+        self.active_keys.extend(keys);
+        self
+    }
+
     pub fn large(mut self, large: bool) -> Self {
         self.large = large;
         self

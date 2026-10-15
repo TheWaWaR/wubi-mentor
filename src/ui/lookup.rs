@@ -71,6 +71,7 @@ impl Render for LookupView {
         let scheme = self.store.scheme();
         let mut active_roots: Vec<Root> = Vec::new();
         let mut active_shapes: Vec<(char, char)> = Vec::new();
+        let mut active_keys: Vec<char> = Vec::new();
         for lookup in seen.iter().filter_map(|&c| self.store.lookup(c)) {
             match lookup {
                 Lookup::Wubi(entry) => active_roots.extend(
@@ -79,7 +80,10 @@ impl Render for LookupView {
                         .into_iter()
                         .filter_map(|i| entry.roots.get(i).cloned()),
                 ),
-                Lookup::Cangjie(entry) => active_shapes.extend(entry.single_key_shapes()),
+                Lookup::Cangjie(entry) => {
+                    active_shapes.extend(entry.single_key_shapes());
+                    active_keys.extend(entry.part_keys());
+                }
             }
         }
 
@@ -164,7 +168,8 @@ impl Render for LookupView {
                                                 Keyboard::new(scheme)
                                                     .large(true)
                                                     .active_roots(&active_roots)
-                                                    .active_shapes(active_shapes),
+                                                    .active_shapes(active_shapes)
+                                                    .active_keys(active_keys),
                                             )
                                             .child(zone_legend(scheme, cx)),
                                     ),
